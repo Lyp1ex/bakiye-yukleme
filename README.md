@@ -122,6 +122,7 @@ copy .env.example .env
 ```env
 BOT_TOKEN=
 ADMIN_IDS=
+ADMIN_PANEL_TOKEN=
 IBAN_TEXT=
 TRON_RPC_URL=https://api.trongrid.io
 TRON_WALLET_ADDRESS=
@@ -136,6 +137,7 @@ TRON_CHECK_INTERVAL_SEC=45
 
 - `BOT_TOKEN`: Create bot with Telegram `@BotFather` -> `/newbot`
 - `ADMIN_IDS`: Your Telegram numeric ID (example: `123456789`), comma-separated for multiple admins
+- `ADMIN_PANEL_TOKEN`: Secret token for web text admin panel
 - `IBAN_TEXT`: Bank instructions shown to users
 - `TRON_WALLET_ADDRESS`: Your receiving TRON wallet address
 
@@ -180,6 +182,21 @@ Includes:
 - Manual coin add/remove
 - Message Templates
 
+## Web Text Admin Panel (Very Simple)
+
+You can edit bot texts from browser without code changes.
+
+URL format:
+
+```text
+https://YOUR_RENDER_URL/admin-panel?token=YOUR_ADMIN_PANEL_TOKEN
+```
+
+From this page you can:
+- Edit existing text keys
+- Create new text keys
+- Save instantly to database
+
 ---
 
 ## Free Hosting Guide (Render) for 3+ months
@@ -203,6 +220,7 @@ This project includes `render.yaml`.
 8. In Render service -> `Environment`, fill these variables:
    - `BOT_TOKEN`
    - `ADMIN_IDS`
+   - `ADMIN_PANEL_TOKEN`
    - `IBAN_TEXT`
    - `TRON_WALLET_ADDRESS`
    - `TRON_PRIVATE_KEY`

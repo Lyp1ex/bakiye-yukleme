@@ -26,19 +26,31 @@ from bot.keyboards.common import (
 )
 from bot.models import User
 from bot.services import DepositService, ShopService, TemplateService, UserService
-from bot.texts.messages import (
-    BANK_RECEIPT_REQUEST,
-    LOAD_COINS,
-    NO_ACTIVE_ITEMS,
-    SHOP_SELECT_GAME,
-    TRX_PAYMENT_TEXT,
-    WELCOME,
-)
+from bot.texts.messages import DEFAULT_TEXT_TEMPLATES
 from bot.utils.formatters import fmt_trx, fmt_try
 
 logger = logging.getLogger(__name__)
 
 MENU, WAIT_BANK_RECEIPT, WAIT_GAME_USER_ID, WAIT_IBAN, WAIT_FULL_NAME, WAIT_BANK_NAME = range(6)
+MENU_REGEX = r"^(Balance|Load Coins|Shop|My Orders|History)$"
+
+
+def _get_text(key: str, fallback: str | None = None) -> str:
+    default_value = fallback if fallback is not None else DEFAULT_TEXT_TEMPLATES.get(key, key)
+    with session_scope() as session:
+        return TemplateService.get_template(session, key=key, fallback=default_value)
+
+
+def _render_text(key: str, **kwargs) -> str:
+    fallback = DEFAULT_TEXT_TEMPLATES.get(key, key)
+    value = _get_text(key, fallback=fallback)
+    try:
+        return value.format(**kwargs)
+    except Exception:
+        try:
+            return fallback.format(**kwargs)
+        except Exception:
+            return fallback
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -48,7 +60,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     with session_scope() as session:
         UserService.get_or_create_user(session, update.effective_user)
 
-    await update.effective_message.reply_text(WELCOME, reply_markup=main_menu_keyboard())
+    await update.effective_message.reply_text(
+        _get_text("welcome_text"),
+        reply_markup=main_menu_keyboard(),
+    )
     return MENU
 
 
@@ -56,7 +71,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     _clear_user_context(context)
     if update.effective_message:
         await update.effective_message.reply_text(
-            "Cancelled. Back to main menu.",
+            _get_text("cancel_text"),
             reply_markup=main_menu_keyboard(),
         )
     return MENU
@@ -78,7 +93,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     if update.effective_message:
         await update.effective_message.reply_text(
-            "Please use the menu buttons.",
+            _get_text("use_menu_buttons_text"),
             reply_markup=main_menu_keyboard(),
         )
     return MENU
@@ -92,7 +107,7 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         user = UserService.get_or_create_user(session, update.effective_user)
 
     await update.effective_message.reply_text(
-        f"Your balance: {user.coin_balance} COIN",
+        _render_text("balance_text", balance=user.coin_balance),
         reply_markup=main_menu_keyboard(),
     )
     return MENU
@@ -106,10 +121,16 @@ async def show_load_packages(update: Update, context: ContextTypes.DEFAULT_TYPE)
         packages = DepositService.list_active_packages(session)
 
     if not packages:
-        await update.effective_message.reply_text(NO_ACTIVE_ITEMS, reply_markup=main_menu_keyboard())
+        await update.effective_message.reply_text(
+            _get_text("no_active_items_text"),
+            reply_markup=main_menu_keyboard(),
+        )
         return MENU
 
-    await update.effective_message.reply_text(LOAD_COINS, reply_markup=packages_keyboard(packages))
+    await update.effective_message.reply_text(
+        _get_text("load_coins_text"),
+        reply_markup=packages_keyboard(packages),
+    )
     return MENU
 
 
@@ -121,10 +142,16 @@ async def show_games(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         games = ShopService.list_active_games(session)
 
     if not games:
-        await update.effective_message.reply_text(NO_ACTIVE_ITEMS, reply_markup=main_menu_keyboard())
+        await update.effective_message.reply_text(
+            _get_text("no_active_items_text"),
+            reply_markup=main_menu_keyboard(),
+        )
         return MENU
 
-    await update.effective_message.reply_text(SHOP_SELECT_GAME, reply_markup=games_keyboard(games))
+    await update.effective_message.reply_text(
+        _get_text("shop_select_game_text"),
+        reply_markup=games_keyboard(games),
+    )
     return MENU
 
 
@@ -137,7 +164,10 @@ async def show_my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         orders = ShopService.list_user_orders(session, user.id, pending_only=True)
 
     if not orders:
-        await update.effective_message.reply_text("No active orders.", reply_markup=main_menu_keyboard())
+        await update.effective_message.reply_text(
+            _get_text("no_active_orders_text"),
+            reply_markup=main_menu_keyboard(),
+        )
         return MENU
 
     lines = ["My Orders:"]
@@ -160,13 +190,13 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         bank_deposits = DepositService.list_user_bank_deposits(session, user.id, limit=10)
         crypto_deposits = DepositService.list_user_crypto_deposits(session, user.id, limit=10)
 
-    lines = ["History (latest):", ""]
+    lines = [_get_text("history_header_text"), ""]
     lines.append("Bank Deposits:")
     if bank_deposits:
         for item in bank_deposits:
             lines.append(f"#{item.id} | {item.status} | {item.created_at:%Y-%m-%d %H:%M}")
     else:
-        lines.append("- no bank deposit records")
+        lines.append(_get_text("no_bank_deposit_records_text"))
 
     lines.append("")
     lines.append("Crypto Deposits:")
@@ -176,7 +206,7 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                 f"#{item.id} | {item.status} | {Decimal(item.expected_trx):.6f} TRX | {item.created_at:%Y-%m-%d %H:%M}"
             )
     else:
-        lines.append("- no crypto deposit records")
+        lines.append(_get_text("no_crypto_deposit_records_text"))
 
     lines.append("")
     lines.append("Orders:")
@@ -184,7 +214,7 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         for order in orders:
             lines.append(f"#{order.id} | {order.product.name} | {order.status}")
     else:
-        lines.append("- no order records")
+        lines.append(_get_text("no_order_records_text"))
 
     await update.effective_message.reply_text("\n".join(lines), reply_markup=main_menu_keyboard())
     return MENU
@@ -199,11 +229,11 @@ async def user_callback_router(update: Update, context: ContextTypes.DEFAULT_TYP
     data = query.data or ""
 
     if data == "menu_back":
-        await query.edit_message_text("Main menu is below.")
+        await query.edit_message_text(_get_text("main_menu_below_text"))
         if update.effective_chat:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="Choose an action:",
+                text=_get_text("choose_action_text"),
                 reply_markup=main_menu_keyboard(),
             )
         return MENU
@@ -212,9 +242,12 @@ async def user_callback_router(update: Update, context: ContextTypes.DEFAULT_TYP
         with session_scope() as session:
             packages = DepositService.list_active_packages(session)
         if not packages:
-            await query.edit_message_text(NO_ACTIVE_ITEMS)
+            await query.edit_message_text(_get_text("no_active_items_text"))
             return MENU
-        await query.edit_message_text(LOAD_COINS, reply_markup=packages_keyboard(packages))
+        await query.edit_message_text(
+            _get_text("load_coins_text"),
+            reply_markup=packages_keyboard(packages),
+        )
         return MENU
 
     if data.startswith("load_pkg:"):
@@ -222,7 +255,7 @@ async def user_callback_router(update: Update, context: ContextTypes.DEFAULT_TYP
         with session_scope() as session:
             package = DepositService.get_package(session, package_id)
         if not package or not package.is_active:
-            await query.edit_message_text("Package not available.")
+            await query.edit_message_text(_get_text("package_not_available_text"))
             return MENU
 
         context.user_data["selected_package_id"] = package_id
@@ -231,7 +264,7 @@ async def user_callback_router(update: Update, context: ContextTypes.DEFAULT_TYP
             f"TRY price: {fmt_try(package.try_price)}\n"
             f"COIN amount: {package.coin_amount}\n"
             f"TRX amount: {fmt_trx(package.trx_amount)}\n\n"
-            "Choose payment method:"
+            f"{_get_text('choose_payment_method_text')}"
         )
         await query.edit_message_text(msg, reply_markup=payment_method_keyboard(package_id))
         return MENU
@@ -244,15 +277,15 @@ async def user_callback_router(update: Update, context: ContextTypes.DEFAULT_TYP
         with session_scope() as session:
             package = DepositService.get_package(session, package_id)
         if not package:
-            await query.edit_message_text("Package not found.")
+            await query.edit_message_text(_get_text("package_not_found_text"))
             return MENU
 
         await query.edit_message_text(
-            f"{BANK_RECEIPT_REQUEST}\n\n"
+            f"{_get_text('bank_receipt_request_text')}\n\n"
             f"Package: {package.name} ({package.coin_amount} COIN)\n"
             f"Amount: {fmt_try(package.try_price)}\n\n"
             f"Bank details:\n{settings.iban_text}\n\n"
-            "Now upload your receipt as photo/document.",
+            f"{_get_text('upload_receipt_prompt_text')}",
         )
         return WAIT_BANK_RECEIPT
 
@@ -261,7 +294,7 @@ async def user_callback_router(update: Update, context: ContextTypes.DEFAULT_TYP
         settings: Settings = context.application.bot_data["settings"]
 
         if not update.effective_user:
-            await query.edit_message_text("User not found.")
+            await query.edit_message_text(_get_text("user_not_found_text"))
             return MENU
 
         try:
@@ -279,11 +312,11 @@ async def user_callback_router(update: Update, context: ContextTypes.DEFAULT_TYP
             return MENU
 
         if not package:
-            await query.edit_message_text("Package not found.")
+            await query.edit_message_text(_get_text("package_not_found_text"))
             return MENU
 
         await query.edit_message_text(
-            f"{TRX_PAYMENT_TEXT}\n\n"
+            f"{_get_text('trx_payment_text')}\n\n"
             f"Request ID: #{req.id}\n"
             f"Wallet: {settings.tron_wallet_address}\n"
             f"Exact Amount: {fmt_trx(req.expected_trx)}\n"
@@ -307,9 +340,12 @@ async def user_callback_router(update: Update, context: ContextTypes.DEFAULT_TYP
         with session_scope() as session:
             games = ShopService.list_active_games(session)
         if not games:
-            await query.edit_message_text(NO_ACTIVE_ITEMS)
+            await query.edit_message_text(_get_text("no_active_items_text"))
             return MENU
-        await query.edit_message_text(SHOP_SELECT_GAME, reply_markup=games_keyboard(games))
+        await query.edit_message_text(
+            _get_text("shop_select_game_text"),
+            reply_markup=games_keyboard(games),
+        )
         return MENU
 
     if data.startswith("shop_game:"):
@@ -320,26 +356,32 @@ async def user_callback_router(update: Update, context: ContextTypes.DEFAULT_TYP
             products = ShopService.list_active_products_by_game(session, game_id)
 
         if not products:
-            await query.edit_message_text("No products for this game.")
+            await query.edit_message_text(_get_text("no_products_for_game_text"))
             return MENU
 
-        await query.edit_message_text("Select product:", reply_markup=products_keyboard(products))
+        await query.edit_message_text(
+            _get_text("select_product_text"),
+            reply_markup=products_keyboard(products),
+        )
         return MENU
 
     if data == "shop_back_products":
         game_id = context.user_data.get("shop_game_id")
         if not game_id:
-            await query.edit_message_text("Session expired. Please select game again.")
+            await query.edit_message_text(_get_text("session_expired_select_game_text"))
             return MENU
 
         with session_scope() as session:
             products = ShopService.list_active_products_by_game(session, int(game_id))
 
         if not products:
-            await query.edit_message_text("No products for this game.")
+            await query.edit_message_text(_get_text("no_products_for_game_text"))
             return MENU
 
-        await query.edit_message_text("Select product:", reply_markup=products_keyboard(products))
+        await query.edit_message_text(
+            _get_text("select_product_text"),
+            reply_markup=products_keyboard(products),
+        )
         return MENU
 
     if data.startswith("shop_product:"):
@@ -348,7 +390,7 @@ async def user_callback_router(update: Update, context: ContextTypes.DEFAULT_TYP
             product = ShopService.get_product(session, product_id)
 
         if not product:
-            await query.edit_message_text("Product not found.")
+            await query.edit_message_text(_get_text("product_not_found_text"))
             return MENU
 
         await query.edit_message_text(
@@ -361,7 +403,7 @@ async def user_callback_router(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if data.startswith("shop_buy:"):
         if not update.effective_user:
-            await query.edit_message_text("User not found.")
+            await query.edit_message_text(_get_text("user_not_found_text"))
             return MENU
 
         product_id = int(data.split(":", 1)[1])
@@ -378,7 +420,7 @@ async def user_callback_router(update: Update, context: ContextTypes.DEFAULT_TYP
                 game = ShopService.get_game(session, product.game_id) if product else None
                 new_balance = user.coin_balance
         except ValueError as exc:
-            await query.edit_message_text(f"Purchase failed: {exc}")
+            await query.edit_message_text(_render_text("purchase_failed_text", error=str(exc)))
             return MENU
 
         if not product or not game:
@@ -389,9 +431,12 @@ async def user_callback_router(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["pending_order_game_label"] = game.id_label
 
         await query.edit_message_text(
-            f"Purchase success. {product.price_coins} COIN deducted.\n"
-            f"New balance: {new_balance} COIN\n\n"
-            f"Now send your {game.id_label}:"
+            _render_text(
+                "purchase_success_text",
+                price=product.price_coins,
+                balance=new_balance,
+                id_label=game.id_label,
+            )
         )
         return WAIT_GAME_USER_ID
 
@@ -404,7 +449,7 @@ async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     package_id = context.user_data.get("selected_package_id")
     if not package_id:
-        await update.effective_message.reply_text("No package selected. Please start again.")
+        await update.effective_message.reply_text(_get_text("no_package_selected_text"))
         return MENU
 
     file_id: str | None = None
@@ -418,7 +463,7 @@ async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE
         file_type = "document"
 
     if not file_id:
-        await update.effective_message.reply_text("Please upload photo or document receipt.")
+        await update.effective_message.reply_text(_get_text("upload_receipt_only_text"))
         return WAIT_BANK_RECEIPT
 
     try:
@@ -442,8 +487,7 @@ async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE
         return MENU
 
     await update.effective_message.reply_text(
-        f"Receipt received. Request ID: #{req.id}.\n"
-        f"{waiting_text}",
+        _render_text("deposit_received_text", request_id=req.id, waiting_text=waiting_text),
         reply_markup=main_menu_keyboard(),
     )
 
@@ -482,11 +526,11 @@ async def handle_game_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     game_user_id = update.effective_message.text.strip()
     if len(game_user_id) < 2:
-        await update.effective_message.reply_text("Please enter a valid game user ID.")
+        await update.effective_message.reply_text(_get_text("invalid_game_user_id_text"))
         return WAIT_GAME_USER_ID
 
     context.user_data["pending_game_user_id"] = game_user_id
-    await update.effective_message.reply_text("Now send your IBAN:")
+    await update.effective_message.reply_text(_get_text("ask_iban_text"))
     return WAIT_IBAN
 
 
@@ -496,11 +540,11 @@ async def handle_iban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     iban = update.effective_message.text.strip().replace(" ", "")
     if len(iban) < 10:
-        await update.effective_message.reply_text("Please enter a valid IBAN.")
+        await update.effective_message.reply_text(_get_text("invalid_iban_text"))
         return WAIT_IBAN
 
     context.user_data["pending_iban"] = iban
-    await update.effective_message.reply_text("Now send Name Surname:")
+    await update.effective_message.reply_text(_get_text("ask_full_name_text"))
     return WAIT_FULL_NAME
 
 
@@ -510,11 +554,11 @@ async def handle_full_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     full_name = update.effective_message.text.strip()
     if len(full_name.split()) < 2:
-        await update.effective_message.reply_text("Please enter full name and surname.")
+        await update.effective_message.reply_text(_get_text("invalid_full_name_text"))
         return WAIT_FULL_NAME
 
     context.user_data["pending_full_name"] = full_name
-    await update.effective_message.reply_text("Now send Bank Name:")
+    await update.effective_message.reply_text(_get_text("ask_bank_name_text"))
     return WAIT_BANK_NAME
 
 
@@ -524,7 +568,7 @@ async def handle_bank_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     bank_name = update.effective_message.text.strip()
     if len(bank_name) < 2:
-        await update.effective_message.reply_text("Please enter bank name.")
+        await update.effective_message.reply_text(_get_text("invalid_bank_name_text"))
         return WAIT_BANK_NAME
 
     order_id = context.user_data.get("pending_order_id")
@@ -533,7 +577,7 @@ async def handle_bank_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     full_name = context.user_data.get("pending_full_name")
 
     if not order_id or not game_user_id or not iban or not full_name:
-        await update.effective_message.reply_text("Order session expired. Please buy again.")
+        await update.effective_message.reply_text(_get_text("order_session_expired_text"))
         _clear_user_context(context)
         return MENU
 
@@ -554,7 +598,7 @@ async def handle_bank_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
 
     await update.effective_message.reply_text(
-        f"Order #{order.id} is submitted for admin processing.\n{order_received_text}",
+        _render_text("order_submitted_text", order_id=order.id, order_received_text=order_received_text),
         reply_markup=main_menu_keyboard(),
     )
 
@@ -587,7 +631,7 @@ def build_user_conversation_handler() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
-            MessageHandler(filters.Regex(r"^(Balance|Load Coins|Shop|My Orders|History)$"), menu_router),
+            MessageHandler(filters.Regex(MENU_REGEX), menu_router),
             CallbackQueryHandler(
                 user_callback_router,
                 pattern=r"^(load_|pay_|shop_|menu_back|load_back)",
@@ -596,7 +640,7 @@ def build_user_conversation_handler() -> ConversationHandler:
         states={
             MENU: [
                 CommandHandler("start", start),
-                MessageHandler(filters.Regex(r"^(Balance|Load Coins|Shop|My Orders|History)$"), menu_router),
+                MessageHandler(filters.Regex(MENU_REGEX), menu_router),
                 CallbackQueryHandler(
                     user_callback_router,
                     pattern=r"^(load_|pay_|shop_|menu_back|load_back)",

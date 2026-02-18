@@ -7,6 +7,7 @@ from sqlalchemy import select
 from bot.database.base import Base
 from bot.database.session import engine, session_scope
 from bot.models import CoinPackage, Game, MessageTemplate
+from bot.texts.messages import DEFAULT_TEXT_TEMPLATES
 
 
 DEFAULT_PACKAGES = [
@@ -19,13 +20,6 @@ DEFAULT_GAMES = [
     {"name": "PUBG Mobile", "requires_server": False, "id_label": "Game User ID"},
     {"name": "Free Fire", "requires_server": False, "id_label": "Player ID"},
 ]
-
-DEFAULT_TEMPLATES = {
-    "deposit_waiting": "Your deposit request has been received. Please wait for admin approval.",
-    "order_received": "Your order is created. Our admin will complete delivery soon.",
-}
-
-
 
 def initialize_database() -> None:
     Base.metadata.create_all(bind=engine)
@@ -41,7 +35,7 @@ def initialize_database() -> None:
             for game in DEFAULT_GAMES:
                 session.add(Game(**game))
 
-        for key, value in DEFAULT_TEMPLATES.items():
+        for key, value in DEFAULT_TEXT_TEMPLATES.items():
             exists = session.scalar(select(MessageTemplate).where(MessageTemplate.key == key))
             if not exists:
                 session.add(MessageTemplate(key=key, content=value))

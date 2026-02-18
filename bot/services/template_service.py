@@ -24,3 +24,8 @@ class TemplateService:
             session.add(row)
         session.flush()
         return row
+
+    @staticmethod
+    def list_templates(session: Session) -> list[MessageTemplate]:
+        stmt = select(MessageTemplate).order_by(MessageTemplate.key.asc())
+        return list(session.scalars(stmt).all())

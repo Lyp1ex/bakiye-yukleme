@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 class Settings:
     bot_token: str
     admin_ids: Set[int]
+    admin_panel_token: str
     iban_text: str
     tron_rpc_url: str
     tron_wallet_address: str
@@ -50,6 +51,7 @@ def get_settings() -> Settings:
     return Settings(
         bot_token=os.getenv("BOT_TOKEN", "").strip(),
         admin_ids=_parse_admin_ids(os.getenv("ADMIN_IDS", "")),
+        admin_panel_token=os.getenv("ADMIN_PANEL_TOKEN", "").strip(),
         iban_text=os.getenv(
             "IBAN_TEXT",
             "IBAN: TR00 0000 0000 0000 0000 0000 00\\nAlici: Coin Shop",

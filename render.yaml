@@ -12,6 +12,8 @@ services:
         sync: false
       - key: ADMIN_IDS
         sync: false
+      - key: ADMIN_PANEL_TOKEN
+        sync: false
       - key: IBAN_TEXT
         sync: false
       - key: TRON_RPC_URL
