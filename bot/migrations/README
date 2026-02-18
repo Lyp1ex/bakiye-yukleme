@@ -1,0 +1,4 @@
+Single-database configuration for Alembic migrations.
+Use:
+  alembic upgrade head
+  alembic revision --autogenerate -m "message"

@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: telegram-coin-shop-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m bot.main
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: IBAN_TEXT
+        sync: false
+      - key: TRON_RPC_URL
+        value: https://api.trongrid.io
+      - key: TRON_WALLET_ADDRESS
+        sync: false
+      - key: TRON_PRIVATE_KEY
+        sync: false
+      - key: CRYPTO_AUTO_APPROVE
+        value: "false"
+      - key: TRON_CHECK_INTERVAL_SEC
+        value: "45"
+      - key: LOG_LEVEL
+        value: INFO
