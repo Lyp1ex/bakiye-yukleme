@@ -45,12 +45,6 @@ def _to_decimal(value: Any) -> Decimal | None:
 def _to_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
-
-
-def _normalize_iban(value: Any) -> str:
-    if value is None:
-        return ""
-    return str(value).replace(" ", "").upper().strip()
     try:
         raw = str(value).strip().replace("Z", "+00:00")
         dt = datetime.fromisoformat(raw)
@@ -61,11 +55,188 @@ def _normalize_iban(value: Any) -> str:
         return None
 
 
+def _normalize_iban(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).replace(" ", "").upper().strip()
+
+
+def _to_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    txt = str(value).strip().lower()
+    return txt in {"1", "true", "yes", "evet"}
+
+
+def _extract_json(raw_text: str) -> dict[str, Any]:
+    text = (raw_text or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        candidate = text[start : end + 1]
+        parsed = json.loads(candidate)
+        if isinstance(parsed, dict):
+            return parsed
+
+    raise ValueError("model_json_parse_failed")
+
+
+def _build_prompts(expected_amount_try: Decimal, expected_iban: str | None) -> tuple[str, str]:
+    system_prompt = (
+        "Sen bir banka dekont doğrulama asistanısın. "
+        "Sadece JSON döndür. "
+        "Alanlar: is_receipt(bool), amount_text(str), date_iso(str), iban_text(str), reasoning(str)."
+    )
+    user_prompt = (
+        "Görsel bir banka dekontu mu kontrol et. "
+        f"Beklenen ödeme tutarı (TL): {expected_amount_try}. "
+        f"Beklenen alıcı IBAN: {expected_iban or '-'} "
+        "Mümkünse dekont üzerindeki ödeme tutarını amount_text alanına, "
+        "işlem tarihini ISO formatında date_iso alanına, "
+        "alıcı IBAN bilgisini iban_text alanına yaz."
+    )
+    return system_prompt, user_prompt
+
+
+def _call_openai(
+    settings: Settings,
+    image_bytes: bytes,
+    mime_type: str,
+    expected_amount_try: Decimal,
+    expected_iban: str | None,
+) -> dict[str, Any]:
+    if not settings.openai_api_key:
+        raise RuntimeError("openai_key_missing")
+
+    system_prompt, user_prompt = _build_prompts(expected_amount_try, expected_iban)
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+    data_url = f"data:{mime_type};base64,{b64}"
+    payload = {
+        "model": settings.openai_model or "gpt-4o-mini",
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_prompt},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            },
+        ],
+        "temperature": 0,
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.openai_api_key}",
+        "Content-Type": "application/json",
+    }
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=45,
+    )
+    response.raise_for_status()
+    data = response.json()
+    content = data["choices"][0]["message"]["content"]
+    return _extract_json(content)
+
+
+def _call_gemini(
+    settings: Settings,
+    image_bytes: bytes,
+    mime_type: str,
+    expected_amount_try: Decimal,
+    expected_iban: str | None,
+) -> dict[str, Any]:
+    if not settings.gemini_api_key:
+        raise RuntimeError("gemini_key_missing")
+
+    system_prompt, user_prompt = _build_prompts(expected_amount_try, expected_iban)
+    instruction = f"{system_prompt}\n{user_prompt}"
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": instruction},
+                    {"inline_data": {"mime_type": mime_type, "data": b64}},
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0,
+            "responseMimeType": "application/json",
+        },
+    }
+    response = requests.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent",
+        params={"key": settings.gemini_api_key},
+        json=payload,
+        timeout=45,
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    candidates = data.get("candidates") or []
+    if not candidates:
+        raise ValueError("gemini_no_candidate")
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    if not parts:
+        raise ValueError("gemini_no_part")
+    text = parts[0].get("text") or ""
+    return _extract_json(text)
+
+
+def _provider_order(settings: Settings) -> list[str]:
+    provider = (settings.receipt_ai_provider or "auto").strip().lower()
+    if provider in {"openai", "gemini"}:
+        return [provider]
+
+    order: list[str] = []
+    if settings.openai_api_key:
+        order.append("openai")
+    if settings.gemini_api_key:
+        order.append("gemini")
+    return order
+
+
+def _http_error_reason(exc: requests.HTTPError) -> str:
+    status = exc.response.status_code if exc.response is not None else "unknown"
+    message = ""
+    if exc.response is not None:
+        try:
+            payload = exc.response.json()
+            err = payload.get("error") if isinstance(payload, dict) else None
+            if isinstance(err, dict):
+                message = str(err.get("type") or err.get("code") or err.get("message") or "")
+            elif isinstance(payload, dict):
+                message = str(payload.get("message") or "")
+        except Exception:
+            message = exc.response.text[:120]
+    if not message:
+        message = str(exc)[:120]
+    return f"http_{status}:{message}"
+
+
 def verify_receipt_image(
     settings: Settings,
     image_bytes: bytes,
     expected_amount_try: Decimal,
     expected_iban: str | None = None,
+    mime_type: str = "image/jpeg",
 ) -> ReceiptCheckResult:
     if not settings.receipt_ai_enabled:
         return ReceiptCheckResult(
@@ -83,7 +254,8 @@ def verify_receipt_image(
             summary="AI dekont kontrolü kapalı.",
         )
 
-    if not settings.openai_api_key:
+    providers = _provider_order(settings)
+    if not providers:
         return ReceiptCheckResult(
             analyzed=False,
             passed=not settings.receipt_ai_strict,
@@ -95,58 +267,55 @@ def verify_receipt_image(
             iban_text="-",
             iban_match=None,
             risk_score=20,
-            risk_flags=["openai_key_missing"],
-            summary="OPENAI_API_KEY yok, AI dekont kontrolü yapılamadı.",
+            risk_flags=["ai_key_missing"],
+            summary="AI için kullanılabilir sağlayıcı anahtarı yok (OPENAI_API_KEY/GEMINI_API_KEY).",
         )
 
-    try:
-        b64 = base64.b64encode(image_bytes).decode("utf-8")
-        data_url = f"data:image/jpeg;base64,{b64}"
+    parsed: dict[str, Any] | None = None
+    used_provider: str | None = None
+    errors: list[str] = []
 
-        system_prompt = (
-            "Sen bir banka dekont doğrulama asistanısın. "
-            "Sadece JSON döndür. "
-            "Alanlar: is_receipt(bool), amount_text(str), date_iso(str), iban_text(str), reasoning(str)."
-        )
-        user_prompt = (
-            "Görsel bir banka dekontu mu kontrol et. "
-            f"Beklenen ödeme tutarı (TL): {expected_amount_try}. "
-            f"Beklenen alıcı IBAN: {expected_iban or '-'} "
-            "Mümkünse dekont üzerindeki ödeme tutarını amount_text alanına, "
-            "işlem tarihini ISO formatında date_iso alanına, alıcı IBAN bilgisini iban_text alanına yaz."
-        )
+    for provider in providers:
+        try:
+            if provider == "openai":
+                parsed = _call_openai(
+                    settings,
+                    image_bytes=image_bytes,
+                    mime_type=mime_type,
+                    expected_amount_try=expected_amount_try,
+                    expected_iban=expected_iban,
+                )
+            elif provider == "gemini":
+                parsed = _call_gemini(
+                    settings,
+                    image_bytes=image_bytes,
+                    mime_type=mime_type,
+                    expected_amount_try=expected_amount_try,
+                    expected_iban=expected_iban,
+                )
+            else:
+                errors.append(f"{provider}:unsupported_provider")
+                continue
 
-        payload = {
-            "model": "gpt-4o-mini",
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_prompt},
-                        {"type": "image_url", "image_url": {"url": data_url}},
-                    ],
-                },
-            ],
-            "temperature": 0,
-        }
-        headers = {
-            "Authorization": f"Bearer {settings.openai_api_key}",
-            "Content-Type": "application/json",
-        }
-        response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=45,
-        )
-        response.raise_for_status()
-        data = response.json()
-        content = data["choices"][0]["message"]["content"]
-        parsed = json.loads(content)
-    except Exception as exc:
-        logger.exception("AI dekont kontrolü başarısız", exc_info=exc)
+            used_provider = provider
+            break
+        except requests.HTTPError as exc:
+            reason = _http_error_reason(exc)
+            errors.append(f"{provider}:{reason}")
+            logger.warning("AI dekont sağlayıcısı başarısız", extra={"provider": provider, "reason": reason})
+            continue
+        except Exception as exc:
+            errors.append(f"{provider}:unexpected_error")
+            logger.exception("AI dekont kontrolü başarısız", extra={"provider": provider}, exc_info=exc)
+            continue
+
+    if parsed is None:
+        risk_flags = ["ai_failure"]
+        if any("insufficient_quota" in e for e in errors):
+            risk_flags.append("provider_quota_exceeded")
+        summary = "AI dekont kontrolü başarısız oldu, manuel incelemeye düştü."
+        if errors:
+            summary = f"{summary} Hata: {' | '.join(errors[:2])}"
         return ReceiptCheckResult(
             analyzed=False,
             passed=not settings.receipt_ai_strict,
@@ -158,11 +327,11 @@ def verify_receipt_image(
             iban_text="-",
             iban_match=None,
             risk_score=30,
-            risk_flags=["ai_failure"],
-            summary="AI dekont kontrolü başarısız oldu, manuel incelemeye düştü.",
+            risk_flags=risk_flags,
+            summary=summary,
         )
 
-    is_receipt = bool(parsed.get("is_receipt"))
+    is_receipt = _to_bool(parsed.get("is_receipt"))
     amount_text = str(parsed.get("amount_text") or "-").strip()
     date_text = str(parsed.get("date_iso") or "-").strip()
     iban_text = str(parsed.get("iban_text") or "-").strip()
@@ -215,7 +384,9 @@ def verify_receipt_image(
     else:
         passed = True
 
+    provider_label = used_provider.upper() if used_provider else "AI"
     summary_parts = [
+        f"Sağlayıcı: {provider_label}",
         f"Dekont: {'Evet' if is_receipt else 'Hayır'}",
         f"Tutar: {amount_text} ({'uyumlu' if amount_match else 'uyumsuz' if amount_match is False else 'belirsiz'})",
         f"Tarih: {date_text} ({'uyumlu' if date_match else 'uyumsuz' if date_match is False else 'belirsiz'})",
@@ -241,3 +412,4 @@ def verify_receipt_image(
         risk_flags=risk_flags,
         summary=" | ".join(summary_parts),
     )
+

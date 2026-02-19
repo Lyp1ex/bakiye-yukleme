@@ -366,6 +366,7 @@ async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE
                     image_bytes=file_bytes,
                     expected_amount_try=payment_try,
                     expected_iban=expected_iban,
+                    mime_type=file_mime_type or "image/jpeg",
                 )
                 receipt_check_summary = check.summary
                 ai_risk_score = check.risk_score

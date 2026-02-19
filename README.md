@@ -25,6 +25,7 @@ Bu proje Telegram üzerinde çalışan, tamamen **admin onaylı** bakiye yüklem
 - Kurallar ve SSS menüleri
 - İtiraz sistemi (reddedilen taleplere kullanıcıdan itiraz)
 - AI dekont kontrolü (opsiyonel):
+  - Çoklu sağlayıcı desteği: OpenAI + Gemini fallback
   - Dekont görselinden belge türü/tutar/tarih kontrolü
   - Alıcı IBAN eşleşmesi + risk skoru
   - Aynı dekont hash tekrar tespiti
@@ -130,7 +131,11 @@ TRON_RPC_URL=https://api.trongrid.io
 TRON_WALLET_ADDRESS=
 TRON_PRIVATE_KEY=
 CRYPTO_AUTO_APPROVE=false
+RECEIPT_AI_PROVIDER=auto
+OPENAI_MODEL=gpt-4o-mini
 OPENAI_API_KEY=
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.0-flash
 RECEIPT_AI_ENABLED=false
 RECEIPT_AI_STRICT=false
 RECEIPT_AMOUNT_TOLERANCE_TRY=5.00
@@ -205,7 +210,7 @@ Proje `render.yaml` içerir.
    - `APP_LAST_UPDATED`
    - `TRON_WALLET_ADDRESS` (opsiyonel)
    - `TRON_PRIVATE_KEY` (opsiyonel)
-   - `OPENAI_API_KEY` (AI dekont kontrolü için opsiyonel)
+   - `OPENAI_API_KEY` veya `GEMINI_API_KEY` (AI dekont kontrolü için en az biri)
 7. Deploy başlat.
 8. Deploy sonrası kontrol:
    - `https://SENIN_RENDER_URL/health` -> `ok` dönmeli
