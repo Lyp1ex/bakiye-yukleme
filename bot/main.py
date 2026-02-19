@@ -6,6 +6,7 @@ from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import logging
 import os
+import requests
 from typing import Any
 import threading
 from urllib.parse import parse_qs, quote_plus, urlparse
@@ -198,6 +199,24 @@ async def daily_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def self_ping_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    if not settings.self_ping_enabled:
+        return
+
+    base_url = settings.self_ping_url or os.getenv("RENDER_EXTERNAL_URL", "").strip()
+    if not base_url:
+        return
+
+    url = f"{base_url.rstrip('/')}/health"
+    try:
+        response = requests.get(url, timeout=8)
+        if response.status_code != 200:
+            logger.warning("Self ping başarısız durum kodu", extra={"url": url, "status_code": response.status_code})
+    except Exception:
+        logger.exception("Self ping çağrısı başarısız", extra={"url": url})
+
+
 
 def build_application() -> Application:
     settings = get_settings()
@@ -232,6 +251,12 @@ def build_application() -> Application:
         interval=max(settings.sla_watchdog_interval_sec, 120),
         first=90,
         name="sla_watchdog_job",
+    )
+    app.job_queue.run_repeating(
+        self_ping_job,
+        interval=max(settings.self_ping_interval_sec, 60),
+        first=45,
+        name="self_ping_job",
     )
     app.job_queue.run_daily(
         daily_backup_job,

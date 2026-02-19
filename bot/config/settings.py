@@ -51,6 +51,9 @@ class Settings:
     sla_level1_minutes: int
     sla_level2_minutes: int
     sla_level3_minutes: int
+    self_ping_enabled: bool
+    self_ping_interval_sec: int
+    self_ping_url: str
     auto_backup_enabled: bool
     backup_hour_utc: int
     backup_minute_utc: int
@@ -156,6 +159,9 @@ def get_settings() -> Settings:
         sla_level1_minutes=_parse_int(os.getenv("SLA_LEVEL1_MINUTES"), 15),
         sla_level2_minutes=_parse_int(os.getenv("SLA_LEVEL2_MINUTES"), 30),
         sla_level3_minutes=_parse_int(os.getenv("SLA_LEVEL3_MINUTES"), 60),
+        self_ping_enabled=_parse_bool(os.getenv("SELF_PING_ENABLED", "true")),
+        self_ping_interval_sec=_parse_int(os.getenv("SELF_PING_INTERVAL_SEC"), 240),
+        self_ping_url=os.getenv("SELF_PING_URL", "").strip(),
         auto_backup_enabled=_parse_bool(os.getenv("AUTO_BACKUP_ENABLED", "true")),
         backup_hour_utc=_parse_int(os.getenv("BACKUP_HOUR_UTC"), 3),
         backup_minute_utc=_parse_int(os.getenv("BACKUP_MINUTE_UTC"), 15),

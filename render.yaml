@@ -84,6 +84,12 @@ services:
         value: "30"
       - key: SLA_LEVEL3_MINUTES
         value: "60"
+      - key: SELF_PING_ENABLED
+        value: "true"
+      - key: SELF_PING_INTERVAL_SEC
+        value: "240"
+      - key: SELF_PING_URL
+        value: "https://telegram-coin-shop-bot.onrender.com"
       - key: AUTO_BACKUP_ENABLED
         value: "true"
       - key: BACKUP_HOUR_UTC
