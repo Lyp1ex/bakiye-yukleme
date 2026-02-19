@@ -6,7 +6,8 @@ DEFAULT_TEXT_TEMPLATES: dict[str, str] = {
     "welcome_text": (
         "Bakiye Botu'na hoş geldiniz.\n"
         "Aşağıdaki menüden ilerleyin.\n"
-        "Önemli: Tüm yüklemeler admin onayı ile tamamlanır."
+        "Önemli: Tüm yüklemeler admin onayı ile tamamlanır.\n"
+        "İletişim: @{support_username}"
     ),
     "cancel_text": "İşlem iptal edildi. Ana menüye dönüldü.",
     "use_menu_buttons_text": "Lütfen menüdeki butonları kullanın.",
@@ -27,11 +28,61 @@ DEFAULT_TEXT_TEMPLATES: dict[str, str] = {
         "Talep edilen bakiye: {balance_amount}\n"
         "Ödemeniz gereken tutar (%{rate_percent}): {payment_try}\n\n"
         "Lütfen aşağıdaki IBAN'a ödemeyi yapın:\n{iban_text}\n\n"
-        "Ödeme sonrası dekontu fotoğraf veya belge olarak gönderin."
+        "Ödeme sonrası dekontu fotoğraf veya belge olarak gönderin.\n"
+        "Referans Kodunuz: {request_code_hint}"
     ),
     "upload_receipt_only_text": "Lütfen dekontu fotoğraf veya belge olarak gönderin.",
     "deposit_waiting": "Talebiniz alındı. Bakiye yüklemesi admin onayı bekliyor.",
-    "deposit_received_text": "Dekont alındı. Talep numaranız: #{request_id}\n{waiting_text}",
+    "deposit_received_text": "Dekont alındı. Talep kodunuz: {request_code}\n{waiting_text}",
+    "support_contact_text": "Soru ve manuel işlemler için buradan yazabilirsiniz: {support_url}",
+    "withdraw_zero_balance_text": "Çekim için bakiyeniz bulunmuyor.",
+    "withdraw_pending_exists_text": "Zaten bekleyen bir çekim talebiniz var. Önce o talep sonuçlanmalı.",
+    "withdraw_start_text": (
+        "Çekim işlemi başlatıldı.\n"
+        "Çekilecek tutar: {balance} BAKİYE\n\n"
+        "Lütfen ad soyad yazın:"
+    ),
+    "withdraw_ask_iban_text": "Şimdi IBAN yazın:",
+    "withdraw_invalid_iban_text": "Geçersiz IBAN. Lütfen TR ile başlayan geçerli IBAN girin.",
+    "withdraw_ask_bank_name_text": "Şimdi banka adını yazın:",
+    "withdraw_confirm_text": (
+        "Çekim Özeti\n"
+        "Ad Soyad: {full_name}\n"
+        "IBAN: {iban}\n"
+        "Banka: {bank_name}\n"
+        "Çekilecek Tutar: {amount} BAKİYE\n\n"
+        "Onay için aşağıdaki butona basın."
+    ),
+    "withdraw_submitted_text": (
+        "Çekim talebiniz alındı: {request_code}\n"
+        "Tutar: {amount} BAKİYE\n"
+        "Admin onayı bekleniyor."
+    ),
+    "withdraw_waiting_text": "Çekim talebiniz admin incelemesinde.",
+    "withdraw_history_header_text": "Çekim Talepleri:",
+    "no_withdraw_records_text": "- çekim talebiniz bulunmuyor",
+    "withdraw_proof_request_text": (
+        "Çekim talebiniz onaylandı: {request_code}\n"
+        "Ödeme gönderildiyse lütfen ekran görüntüsü (SS) gönderin."
+    ),
+    "withdraw_proof_only_text": "Lütfen ekran görüntüsünü fotoğraf veya belge olarak gönderin.",
+    "withdraw_proof_received_text": "Teşekkürler. SS alındı ve admin ekibine iletildi.",
+    "withdraw_admin_caption_text": (
+        "Bekleyen çekim talebi\n"
+        "Talep Kodu: {request_code}\n"
+        "Kullanıcı TG: {telegram_id}\n"
+        "Kullanıcı Adı: @{username}\n"
+        "Ad Soyad: {full_name}\n"
+        "IBAN: {iban}\n"
+        "Banka: {bank_name}\n"
+        "Tutar: {amount} BAKİYE"
+    ),
+    "withdraw_proof_admin_caption_text": (
+        "Çekim için SS geldi\n"
+        "Talep Kodu: {request_code}\n"
+        "Kullanıcı TG: {telegram_id}\n"
+        "Kullanıcı Adı: @{username}"
+    ),
     "history_header_text": "Geçmişim (son kayıtlar):",
     "bank_history_header_text": "Banka Yükleme Talepleri:",
     "crypto_history_header_text": "Kripto Yükleme Talepleri:",
@@ -39,7 +90,7 @@ DEFAULT_TEXT_TEMPLATES: dict[str, str] = {
     "no_crypto_deposit_records_text": "- kripto yükleme talebiniz bulunmuyor",
     "receipt_caption_admin_text": (
         "Bekleyen banka yükleme talebi\n"
-        "Talep: #{request_id}\n"
+        "Talep Kodu: {request_code}\n"
         "Kullanıcı TG: {telegram_id}\n"
         "İstenen bakiye: {balance_amount}\n"
         "Ödenmesi gereken: {payment_try}"
@@ -110,6 +161,23 @@ TEMPLATE_LABELS: dict[str, str] = {
     "upload_receipt_only_text": "Dekont Uyarısı",
     "deposit_waiting": "Yükleme Bekleme Mesajı",
     "deposit_received_text": "Dekont Alındı Mesajı",
+    "support_contact_text": "Destek Mesajı",
+    "withdraw_zero_balance_text": "Çekim Bakiye Yok",
+    "withdraw_pending_exists_text": "Çekim Bekleyen Talep Uyarısı",
+    "withdraw_start_text": "Çekim Başlangıç Mesajı",
+    "withdraw_ask_iban_text": "Çekim IBAN İsteği",
+    "withdraw_invalid_iban_text": "Çekim IBAN Hata Mesajı",
+    "withdraw_ask_bank_name_text": "Çekim Banka İsteği",
+    "withdraw_confirm_text": "Çekim Onay Özeti",
+    "withdraw_submitted_text": "Çekim Talebi Alındı",
+    "withdraw_waiting_text": "Çekim Bekleme Mesajı",
+    "withdraw_history_header_text": "Çekim Geçmiş Başlığı",
+    "no_withdraw_records_text": "Çekim Kayıt Yok",
+    "withdraw_proof_request_text": "Çekim SS İsteği",
+    "withdraw_proof_only_text": "Çekim SS Uyarısı",
+    "withdraw_proof_received_text": "Çekim SS Alındı",
+    "withdraw_admin_caption_text": "Çekim Admin Açıklaması",
+    "withdraw_proof_admin_caption_text": "Çekim SS Admin Açıklaması",
     "history_header_text": "Geçmiş Başlığı",
     "bank_history_header_text": "Banka Geçmiş Başlığı",
     "crypto_history_header_text": "Kripto Geçmiş Başlığı",

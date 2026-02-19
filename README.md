@@ -1,6 +1,6 @@
-# Telegram Bakiye Yükleme Botu (Türkçe MVP)
+# Telegram Bakiye Yükleme + Çekim Botu (Türkçe MVP)
 
-Bu proje Telegram üzerinde çalışan, tamamen **admin onaylı** bakiye yükleme botudur.
+Bu proje Telegram üzerinde çalışan, tamamen **admin onaylı** bakiye yükleme ve çekim botudur.
 
 ## Özellikler
 
@@ -12,9 +12,17 @@ Bu proje Telegram üzerinde çalışan, tamamen **admin onaylı** bakiye yüklem
 - IBAN gösterme + dekont yükletme
 - **Otomatik bakiye ekleme yok**
 - Admin onayı sonrası bakiye ekleme
+- Tam bakiye çekim talebi:
+  - Kullanıcıdan sırasıyla `Ad Soyad` -> `IBAN` -> `Banka Adı` alınır
+  - Tutar seçimi yok, kullanıcı bakiyesinin tamamı çekim talebine gider
+  - Admin onay/red yapar (red olursa bakiye iade)
+  - Onay sonrası kullanıcıdan ekran görüntüsü (SS) toplanır
+- Destek butonu: `t.me/donsalvatoree`
+- Talep kodu formatı: `DS-#ID`
 - Admin panelinden:
   - Bekleyen banka talepleri
   - Bekleyen kripto talepleri
+  - Bekleyen çekim talepleri
   - Kullanıcı arama
   - Manuel bakiye ekleme/çıkarma
   - Metin şablonlarını düzenleme
@@ -26,7 +34,9 @@ Bu proje Telegram üzerinde çalışan, tamamen **admin onaylı** bakiye yüklem
 
 - `Bakiyem`
 - `Bakiye Yükleme İşlemi`
+- `Çekim Talebi`
 - `Geçmişim`
+- `Soru Sor / Destek`
 
 `Bakiye Yükleme İşlemi`:
 
@@ -35,6 +45,15 @@ Bu proje Telegram üzerinde çalışan, tamamen **admin onaylı** bakiye yüklem
 3. Bot IBAN bilgisini gösterir.
 4. Kullanıcı dekont gönderir.
 5. Admin onaylarsa bakiye eklenir.
+
+`Çekim Talebi`:
+
+1. Kullanıcı ad-soyad yazar.
+2. Bot IBAN ister.
+3. Bot banka adı ister.
+4. Kullanıcı `Çekim Talebi Gönder` ile onaylar.
+5. Bot kullanıcının mevcut bakiyesinin tamamını çekim talebine çevirir.
+6. Admin onay/red verir.
 
 ## 1) Kod Nereye Konur?
 
@@ -83,6 +102,7 @@ BOT_TOKEN=
 ADMIN_IDS=
 ADMIN_PANEL_TOKEN=
 IBAN_TEXT=IBAN: TR690006701000000041067977 | Alıcı: Mehmet Can Yıldırım
+SUPPORT_USERNAME=donsalvatoree
 TRON_RPC_URL=https://api.trongrid.io
 TRON_WALLET_ADDRESS=
 TRON_PRIVATE_KEY=
@@ -138,6 +158,7 @@ Proje `render.yaml` içerir.
    - `ADMIN_IDS`
    - `ADMIN_PANEL_TOKEN`
    - `IBAN_TEXT`
+   - `SUPPORT_USERNAME`
    - `TRON_WALLET_ADDRESS` (opsiyonel)
    - `TRON_PRIVATE_KEY` (opsiyonel)
 7. Deploy başlat.

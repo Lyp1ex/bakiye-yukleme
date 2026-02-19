@@ -5,6 +5,8 @@ from telegram import ReplyKeyboardMarkup
 MENU_BAKIYE = "Bakiyem"
 MENU_YUKLEME = "Bakiye Yükleme İşlemi"
 MENU_GECMIS = "Geçmişim"
+MENU_CEKIM = "Çekim Talebi"
+MENU_DESTEK = "Soru Sor / Destek"
 
 
 
@@ -12,7 +14,8 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
             [MENU_BAKIYE, MENU_YUKLEME],
-            [MENU_GECMIS],
+            [MENU_CEKIM, MENU_GECMIS],
+            [MENU_DESTEK],
         ],
         resize_keyboard=True,
     )

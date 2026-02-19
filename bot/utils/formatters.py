@@ -9,6 +9,7 @@ STATUS_MAP_TR = {
     "rejected": "Reddedildi",
     "pending_payment": "Ödeme Bekleniyor",
     "detected": "Ödeme Tespit Edildi",
+    "paid_waiting_proof": "SS Bekleniyor",
     "waiting_user_info": "Kullanıcı Bilgisi Bekleniyor",
     "pending_admin": "Admin İşleminde",
     "completed": "Tamamlandı",

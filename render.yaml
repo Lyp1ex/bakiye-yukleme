@@ -16,6 +16,8 @@ services:
         sync: false
       - key: IBAN_TEXT
         sync: false
+      - key: SUPPORT_USERNAME
+        value: donsalvatoree
       - key: TRON_RPC_URL
         value: https://api.trongrid.io
       - key: TRON_WALLET_ADDRESS

@@ -17,7 +17,7 @@ from bot.config.settings import Settings
 from bot.database.session import session_scope
 from bot.keyboards.admin import admin_panel_keyboard, approve_reject_keyboard
 from bot.models import User
-from bot.services import AdminService, DepositService
+from bot.services import AdminService, DepositService, WithdrawalService
 from bot.texts.messages import TEMPLATE_LABELS
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ STATUS_MAP_TR = {
     "rejected": "Reddedildi",
     "pending_payment": "Ödeme Bekleniyor",
     "detected": "Ödeme Tespit Edildi",
+    "paid_waiting_proof": "SS Bekleniyor",
     "waiting_user_info": "Kullanıcı Bilgisi Bekleniyor",
     "pending_admin": "Admin İşleminde",
     "completed": "Tamamlandı",
@@ -47,6 +48,10 @@ STATUS_MAP_TR = {
 
 def _status_text(raw_status: str) -> str:
     return STATUS_MAP_TR.get(raw_status, raw_status)
+
+
+def _req_code(request_id: int) -> str:
+    return f"DS-#{request_id}"
 
 
 async def open_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -100,6 +105,20 @@ async def admin_callback_router(update: Update, context: ContextTypes.DEFAULT_TY
     if data.startswith("admin_crypto_no:"):
         request_id = int(data.split(":", 1)[1])
         await _reject_crypto(query, context, request_id)
+        return ADMIN_MENU
+
+    if data == "admin_withdraw_list":
+        await _show_pending_withdrawals(query, context)
+        return ADMIN_MENU
+
+    if data.startswith("admin_withdraw_ok:"):
+        request_id = int(data.split(":", 1)[1])
+        await _approve_withdrawal(query, context, request_id)
+        return ADMIN_MENU
+
+    if data.startswith("admin_withdraw_no:"):
+        request_id = int(data.split(":", 1)[1])
+        await _reject_withdrawal(query, context, request_id)
         return ADMIN_MENU
 
     if data == "admin_search":
@@ -310,6 +329,7 @@ async def _show_pending_bank(query, context: ContextTypes.DEFAULT_TYPE) -> None:
     for req in rows[:40]:
         text = (
             f"Banka Talebi #{req.id}\n"
+            f"Talep Kodu: {_req_code(req.id)}\n"
             f"Kullanıcı TG: {req.user.telegram_id}\n"
             f"Kullanıcı Adı: @{req.user.username or '-'}\n"
             f"Yüklenecek Bakiye: {req.package.coin_amount}\n"
@@ -348,11 +368,11 @@ async def _approve_bank(query, context: ContextTypes.DEFAULT_TYPE, request_id: i
         await query.edit_message_text(f"Onaylanamadı: {exc}")
         return
 
-    await query.edit_message_text(f"Banka talebi #{request_id} onaylandı.")
+    await query.edit_message_text(f"Banka talebi {_req_code(request_id)} onaylandı.")
     if user:
         await context.bot.send_message(
             chat_id=user.telegram_id,
-            text=f"Banka yükleme talebiniz #{request_id} onaylandı. Bakiye eklendi.",
+            text=f"Banka yükleme talebiniz {_req_code(request_id)} onaylandı. Bakiye eklendi.",
         )
 
 
@@ -371,11 +391,11 @@ async def _reject_bank(query, context: ContextTypes.DEFAULT_TYPE, request_id: in
         await query.edit_message_text(f"Reddedilemedi: {exc}")
         return
 
-    await query.edit_message_text(f"Banka talebi #{request_id} reddedildi.")
+    await query.edit_message_text(f"Banka talebi {_req_code(request_id)} reddedildi.")
     if user:
         await context.bot.send_message(
             chat_id=user.telegram_id,
-            text=f"Banka yükleme talebiniz #{request_id} reddedildi. Destek ile iletişime geçin.",
+            text=f"Banka yükleme talebiniz {_req_code(request_id)} reddedildi. Destek ile iletişime geçin.",
         )
 
 
@@ -396,6 +416,7 @@ async def _show_pending_crypto(query, context: ContextTypes.DEFAULT_TYPE) -> Non
     for req in rows[:40]:
         text = (
             f"Kripto Talebi #{req.id}\n"
+            f"Talep Kodu: {_req_code(req.id)}\n"
             f"Kullanıcı TG: {req.user.telegram_id}\n"
             f"Beklenen: {req.expected_trx} TRX\n"
             f"Durum: {_status_text(req.status)}\n"
@@ -418,11 +439,11 @@ async def _approve_crypto(query, context: ContextTypes.DEFAULT_TYPE, request_id:
         await query.edit_message_text(f"Onaylanamadı: {exc}")
         return
 
-    await query.edit_message_text(f"Kripto talebi #{request_id} onaylandı.")
+    await query.edit_message_text(f"Kripto talebi {_req_code(request_id)} onaylandı.")
     if user:
         await context.bot.send_message(
             chat_id=user.telegram_id,
-            text=f"Kripto yükleme talebiniz #{request_id} onaylandı. Bakiye eklendi.",
+            text=f"Kripto yükleme talebiniz {_req_code(request_id)} onaylandı. Bakiye eklendi.",
         )
 
 
@@ -441,11 +462,92 @@ async def _reject_crypto(query, context: ContextTypes.DEFAULT_TYPE, request_id: 
         await query.edit_message_text(f"Reddedilemedi: {exc}")
         return
 
-    await query.edit_message_text(f"Kripto talebi #{request_id} reddedildi.")
+    await query.edit_message_text(f"Kripto talebi {_req_code(request_id)} reddedildi.")
     if user:
         await context.bot.send_message(
             chat_id=user.telegram_id,
-            text=f"Kripto yükleme talebiniz #{request_id} reddedildi. Destek ile iletişime geçin.",
+            text=f"Kripto yükleme talebiniz {_req_code(request_id)} reddedildi. Destek ile iletişime geçin.",
+        )
+
+
+async def _show_pending_withdrawals(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with session_scope() as session:
+        rows = WithdrawalService.list_pending_requests(session)
+
+    if not rows:
+        await query.edit_message_text("Bekleyen çekim talebi yok.", reply_markup=admin_panel_keyboard())
+        return
+
+    await query.edit_message_text(
+        f"Bekleyen çekim talepleri: {len(rows)}\nDetaylar aşağıda gönderildi.",
+        reply_markup=admin_panel_keyboard(),
+    )
+
+    chat_id = query.message.chat_id
+    for req in rows[:40]:
+        text = (
+            f"Çekim Talebi #{req.id}\n"
+            f"Talep Kodu: {_req_code(req.id)}\n"
+            f"Kullanıcı TG: {req.user.telegram_id}\n"
+            f"Kullanıcı Adı: @{req.user.username or '-'}\n"
+            f"Ad Soyad: {req.full_name}\n"
+            f"IBAN: {req.iban}\n"
+            f"Banka: {req.bank_name}\n"
+            f"Tutar: {req.amount_coins} BAKİYE\n"
+            f"Durum: {_status_text(req.status)}\n"
+            f"Oluşturma: {req.created_at:%Y-%m-%d %H:%M}"
+        )
+        markup = approve_reject_keyboard(
+            approve_data=f"admin_withdraw_ok:{req.id}",
+            reject_data=f"admin_withdraw_no:{req.id}",
+        )
+        await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
+
+
+async def _approve_withdrawal(query, context: ContextTypes.DEFAULT_TYPE, request_id: int) -> None:
+    admin_id = query.from_user.id
+    try:
+        with session_scope() as session:
+            req = WithdrawalService.approve_request(session, request_id, admin_id)
+            user = session.get(User, req.user_id)
+    except ValueError as exc:
+        await query.edit_message_text(f"Onaylanamadı: {exc}")
+        return
+
+    await query.edit_message_text(f"Çekim talebi {_req_code(request_id)} onaylandı.")
+    if user:
+        await context.bot.send_message(
+            chat_id=user.telegram_id,
+            text=(
+                f"Çekim talebiniz {_req_code(request_id)} onaylandı.\n"
+                "Ödeme yapıldıysa lütfen ekran görüntüsünü (SS) bu sohbete gönderin."
+            ),
+        )
+
+
+async def _reject_withdrawal(query, context: ContextTypes.DEFAULT_TYPE, request_id: int) -> None:
+    admin_id = query.from_user.id
+    try:
+        with session_scope() as session:
+            req = WithdrawalService.reject_request(
+                session,
+                request_id,
+                admin_id,
+                note="Admin tarafından reddedildi",
+            )
+            user = session.get(User, req.user_id)
+    except ValueError as exc:
+        await query.edit_message_text(f"Reddedilemedi: {exc}")
+        return
+
+    await query.edit_message_text(f"Çekim talebi {_req_code(request_id)} reddedildi. Tutar kullanıcıya iade edildi.")
+    if user:
+        await context.bot.send_message(
+            chat_id=user.telegram_id,
+            text=(
+                f"Çekim talebiniz {_req_code(request_id)} reddedildi.\n"
+                f"{req.amount_coins} BAKİYE hesabınıza geri eklendi."
+            ),
         )
 
 

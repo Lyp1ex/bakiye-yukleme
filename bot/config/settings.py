@@ -15,6 +15,7 @@ class Settings:
     admin_ids: Set[int]
     admin_panel_token: str
     iban_text: str
+    support_username: str
     tron_rpc_url: str
     tron_wallet_address: str
     tron_private_key: str
@@ -80,6 +81,7 @@ def get_settings() -> Settings:
             "IBAN_TEXT",
             "IBAN: TR00 0000 0000 0000 0000 0000 00\\nAlıcı: Hesap Sahibi",
         ),
+        support_username=os.getenv("SUPPORT_USERNAME", "donsalvatoree").strip().lstrip("@"),
         tron_rpc_url=os.getenv("TRON_RPC_URL", "https://api.trongrid.io").rstrip("/"),
         tron_wallet_address=os.getenv("TRON_WALLET_ADDRESS", "").strip(),
         tron_private_key=os.getenv("TRON_PRIVATE_KEY", "").strip(),

@@ -7,6 +7,7 @@ from bot.models.message_template import MessageTemplate
 from bot.models.order import Order
 from bot.models.product import Product
 from bot.models.user import User
+from bot.models.withdrawal_request import WithdrawalRequest
 
 __all__ = [
     "User",
@@ -18,4 +19,5 @@ __all__ = [
     "Order",
     "AdminLog",
     "MessageTemplate",
+    "WithdrawalRequest",
 ]
