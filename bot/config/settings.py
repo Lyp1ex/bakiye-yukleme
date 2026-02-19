@@ -26,12 +26,27 @@ class Settings:
     receipt_ai_strict: bool
     receipt_amount_tolerance_try: Decimal
     receipt_date_max_diff_days: int
+    receipt_hash_check_enabled: bool
+    receipt_risk_reject_threshold: int
+    risk_flag_threshold: int
     database_url: str
     log_level: str
     tron_check_interval_sec: int
     min_balance_amount: int
     max_balance_amount: int
     balance_payment_rate: Decimal
+    bank_queue_eta_min_per_request: int
+    crypto_queue_eta_min_per_request: int
+    withdraw_queue_eta_min_per_request: int
+    reminder_enabled: bool
+    reminder_interval_sec: int
+    reminder_min_age_minutes: int
+    reminder_cooldown_minutes: int
+    auto_backup_enabled: bool
+    backup_hour_utc: int
+    backup_minute_utc: int
+    backup_retention_days: int
+    backup_dir: str
 
 
 
@@ -101,6 +116,9 @@ def get_settings() -> Settings:
             Decimal("5.00"),
         ),
         receipt_date_max_diff_days=_parse_int(os.getenv("RECEIPT_DATE_MAX_DIFF_DAYS"), 3),
+        receipt_hash_check_enabled=_parse_bool(os.getenv("RECEIPT_HASH_CHECK_ENABLED", "true")),
+        receipt_risk_reject_threshold=_parse_int(os.getenv("RECEIPT_RISK_REJECT_THRESHOLD"), 70),
+        risk_flag_threshold=_parse_int(os.getenv("RISK_FLAG_THRESHOLD"), 40),
         database_url=os.getenv("DATABASE_URL", "sqlite:///./bot.db").strip(),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         tron_check_interval_sec=_parse_int(os.getenv("TRON_CHECK_INTERVAL_SEC"), 45),
@@ -110,4 +128,16 @@ def get_settings() -> Settings:
             os.getenv("BALANCE_PAYMENT_RATE"),
             Decimal("0.20"),
         ),
+        bank_queue_eta_min_per_request=_parse_int(os.getenv("BANK_QUEUE_ETA_MIN_PER_REQUEST"), 7),
+        crypto_queue_eta_min_per_request=_parse_int(os.getenv("CRYPTO_QUEUE_ETA_MIN_PER_REQUEST"), 5),
+        withdraw_queue_eta_min_per_request=_parse_int(os.getenv("WITHDRAW_QUEUE_ETA_MIN_PER_REQUEST"), 12),
+        reminder_enabled=_parse_bool(os.getenv("REMINDER_ENABLED", "true")),
+        reminder_interval_sec=_parse_int(os.getenv("REMINDER_INTERVAL_SEC"), 1800),
+        reminder_min_age_minutes=_parse_int(os.getenv("REMINDER_MIN_AGE_MINUTES"), 20),
+        reminder_cooldown_minutes=_parse_int(os.getenv("REMINDER_COOLDOWN_MINUTES"), 60),
+        auto_backup_enabled=_parse_bool(os.getenv("AUTO_BACKUP_ENABLED", "true")),
+        backup_hour_utc=_parse_int(os.getenv("BACKUP_HOUR_UTC"), 3),
+        backup_minute_utc=_parse_int(os.getenv("BACKUP_MINUTE_UTC"), 15),
+        backup_retention_days=_parse_int(os.getenv("BACKUP_RETENTION_DAYS"), 14),
+        backup_dir=os.getenv("BACKUP_DIR", "./backups").strip(),
     )

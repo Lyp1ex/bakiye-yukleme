@@ -20,9 +20,14 @@ Bu proje Telegram üzerinde çalışan, tamamen **admin onaylı** bakiye yüklem
 - Destek butonu: `t.me/donsalvatoree`
 - Talep kodu formatı: `DS-#ID`
 - Talep Durumu ekranı (son banka/kripto/çekim adımları + sıradaki adım)
+- Sıra + tahmini süre gösterimi (kullanıcı taleplerinde)
+- Otomatik hatırlatma (bekleyen taleplerde kullanıcı + admin)
 - Kurallar ve SSS menüleri
+- İtiraz sistemi (reddedilen taleplere kullanıcıdan itiraz)
 - AI dekont kontrolü (opsiyonel):
   - Dekont görselinden belge türü/tutar/tarih kontrolü
+  - Alıcı IBAN eşleşmesi + risk skoru
+  - Aynı dekont hash tekrar tespiti
   - İstenirse strict modda otomatik red
 - Admin panelinden:
   - Bekleyen banka talepleri
@@ -30,9 +35,15 @@ Bu proje Telegram üzerinde çalışan, tamamen **admin onaylı** bakiye yüklem
   - Bekleyen çekim talepleri
   - Günlük finans raporu
   - CSV dışa aktar
+  - KPI paneli
+  - Toplu duyuru
+  - İtiraz kayıt yönetimi
+  - Şüpheli kullanıcı bayrakları
+  - Manuel yedek alma
   - Kullanıcı arama
   - Manuel bakiye ekleme/çıkarma
   - Metin şablonlarını düzenleme
+- Günlük otomatik veritabanı yedeği (adminlere gönderim)
 - Web metin paneli: `/admin-panel?token=...`
 
 ## Kullanıcı Akışı
@@ -43,6 +54,7 @@ Bu proje Telegram üzerinde çalışan, tamamen **admin onaylı** bakiye yüklem
 - `Bakiye Yükleme İşlemi`
 - `Çekim Talebi`
 - `Talep Durumu`
+- `İtiraz / Destek Kaydı`
 - `Geçmişim`
 - `Kurallar`
 - `SSS`
@@ -123,12 +135,27 @@ RECEIPT_AI_ENABLED=false
 RECEIPT_AI_STRICT=false
 RECEIPT_AMOUNT_TOLERANCE_TRY=5.00
 RECEIPT_DATE_MAX_DIFF_DAYS=3
+RECEIPT_HASH_CHECK_ENABLED=true
+RECEIPT_RISK_REJECT_THRESHOLD=70
+RISK_FLAG_THRESHOLD=40
 DATABASE_URL=sqlite:///./bot.db
 LOG_LEVEL=INFO
 TRON_CHECK_INTERVAL_SEC=45
 MIN_BALANCE_AMOUNT=15000
 MAX_BALANCE_AMOUNT=250000
 BALANCE_PAYMENT_RATE=0.20
+BANK_QUEUE_ETA_MIN_PER_REQUEST=7
+CRYPTO_QUEUE_ETA_MIN_PER_REQUEST=5
+WITHDRAW_QUEUE_ETA_MIN_PER_REQUEST=12
+REMINDER_ENABLED=true
+REMINDER_INTERVAL_SEC=1800
+REMINDER_MIN_AGE_MINUTES=20
+REMINDER_COOLDOWN_MINUTES=60
+AUTO_BACKUP_ENABLED=true
+BACKUP_HOUR_UTC=3
+BACKUP_MINUTE_UTC=15
+BACKUP_RETENTION_DAYS=14
+BACKUP_DIR=./backups
 ```
 
 ## 5) Bot Token Nasıl Alınır?

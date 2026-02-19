@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from decimal import InvalidOperation
 from io import BytesIO
 import logging
@@ -19,7 +20,15 @@ from bot.config.settings import Settings
 from bot.database.session import session_scope
 from bot.keyboards.admin import admin_panel_keyboard, approve_reject_keyboard
 from bot.models import User
-from bot.services import AdminService, DepositService, ReportService, WithdrawalService
+from bot.services import (
+    AdminService,
+    DepositService,
+    ReportService,
+    RiskService,
+    TicketService,
+    WithdrawalService,
+    create_database_backup,
+)
 from bot.texts.messages import TEMPLATE_LABELS
 
 logger = logging.getLogger(__name__)
@@ -35,6 +44,8 @@ STATUS_MAP_TR = {
     "pending_admin": "Admin İşleminde",
     "completed": "Tamamlandı",
     "cancelled": "İptal Edildi",
+    "open": "Açık",
+    "resolved": "Çözüldü",
 }
 
 (
@@ -45,7 +56,8 @@ STATUS_MAP_TR = {
     ADMIN_WAIT_MANUAL_REASON,
     ADMIN_WAIT_TEMPLATE_KEY,
     ADMIN_WAIT_TEMPLATE_CONTENT,
-) = range(200, 207)
+    ADMIN_WAIT_BROADCAST_TEXT,
+) = range(200, 208)
 
 
 def _status_text(raw_status: str) -> str:
@@ -54,6 +66,14 @@ def _status_text(raw_status: str) -> str:
 
 def _req_code(request_id: int) -> str:
     return f"DS-#{request_id}"
+
+
+def _source_text(source_type: str) -> str:
+    return {
+        "bank": "Banka",
+        "crypto": "Kripto",
+        "withdraw": "Çekim",
+    }.get(source_type, source_type)
 
 
 async def open_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -127,8 +147,43 @@ async def admin_callback_router(update: Update, context: ContextTypes.DEFAULT_TY
         await _send_daily_report(query, context)
         return ADMIN_MENU
 
+    if data == "admin_kpi":
+        await _send_kpi_report(query, context)
+        return ADMIN_MENU
+
     if data == "admin_export_csv":
         await _send_csv_export(query, context)
+        return ADMIN_MENU
+
+    if data == "admin_broadcast":
+        await query.edit_message_text("Toplu duyuru metnini yazın:")
+        return ADMIN_WAIT_BROADCAST_TEXT
+
+    if data == "admin_ticket_list":
+        await _show_open_tickets(query, context)
+        return ADMIN_MENU
+
+    if data.startswith("admin_ticket_ok:"):
+        ticket_id = int(data.split(":", 1)[1])
+        await _resolve_ticket(query, context, ticket_id)
+        return ADMIN_MENU
+
+    if data.startswith("admin_ticket_no:"):
+        ticket_id = int(data.split(":", 1)[1])
+        await _reject_ticket(query, context, ticket_id)
+        return ADMIN_MENU
+
+    if data == "admin_risk_list":
+        await _show_open_risks(query, context)
+        return ADMIN_MENU
+
+    if data.startswith("admin_risk_clear:"):
+        risk_id = int(data.split(":", 1)[1])
+        await _resolve_risk(query, context, risk_id)
+        return ADMIN_MENU
+
+    if data == "admin_backup_now":
+        await _run_backup_now(query, context)
         return ADMIN_MENU
 
     if data == "admin_search":
@@ -312,6 +367,38 @@ async def handle_template_content(update: Update, context: ContextTypes.DEFAULT_
     return ADMIN_MENU
 
 
+async def handle_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not update.effective_message or not update.effective_user:
+        return ADMIN_MENU
+
+    text = update.effective_message.text.strip()
+    if len(text) < 3:
+        await update.effective_message.reply_text("Metin çok kısa. Tekrar yazın:")
+        return ADMIN_WAIT_BROADCAST_TEXT
+
+    with session_scope() as session:
+        users = AdminService.list_all_users(session)
+
+    success = 0
+    failed = 0
+    for user in users:
+        try:
+            await context.bot.send_message(
+                chat_id=user.telegram_id,
+                text=text,
+            )
+            success += 1
+            await asyncio.sleep(0.03)
+        except Exception:
+            failed += 1
+
+    await update.effective_message.reply_text(
+        f"Toplu duyuru tamamlandı. Başarılı: {success} | Hata: {failed}",
+        reply_markup=admin_panel_keyboard(),
+    )
+    return ADMIN_MENU
+
+
 async def admin_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     if update.effective_message:
@@ -336,7 +423,11 @@ async def _show_pending_bank(query, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     chat_id = query.message.chat_id
-    for req in rows[:40]:
+    settings: Settings = context.application.bot_data["settings"]
+    total_rows = len(rows)
+    for idx, req in enumerate(rows[:40], start=1):
+        eta = idx * max(settings.bank_queue_eta_min_per_request, 1)
+        queue_text = f"\nSıra: {idx}/{total_rows} | Tahmini: {eta} dk"
         text = (
             f"Banka Talebi #{req.id}\n"
             f"Talep Kodu: {_req_code(req.id)}\n"
@@ -346,6 +437,7 @@ async def _show_pending_bank(query, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"Ödenecek Tutar: {req.package.try_price} TL\n"
             f"Durum: {_status_text(req.status)}\n"
             f"Oluşturma: {req.created_at:%Y-%m-%d %H:%M}"
+            f"{queue_text}"
         )
         markup = approve_reject_keyboard(
             approve_data=f"admin_bank_ok:{req.id}",
@@ -388,6 +480,7 @@ async def _approve_bank(query, context: ContextTypes.DEFAULT_TYPE, request_id: i
 
 async def _reject_bank(query, context: ContextTypes.DEFAULT_TYPE, request_id: int) -> None:
     admin_id = query.from_user.id
+    risk_flagged = False
     try:
         with session_scope() as session:
             req = DepositService.reject_bank_request(
@@ -397,11 +490,27 @@ async def _reject_bank(query, context: ContextTypes.DEFAULT_TYPE, request_id: in
                 note="Admin tarafından reddedildi",
             )
             user = session.get(User, req.user_id)
+            recent_reject_count = DepositService.count_recent_rejected_bank_for_user(session, req.user_id, hours=24)
+            if recent_reject_count >= 3:
+                RiskService.create_flag(
+                    session,
+                    user_id=req.user_id,
+                    score=70,
+                    source="repeated_rejects",
+                    reason="Son 24 saatte çoklu banka talebi reddi tespit edildi.",
+                    details=f"recent_reject_count={recent_reject_count}",
+                    entity_type="bank_deposit",
+                    entity_id=req.id,
+                )
+                risk_flagged = True
     except ValueError as exc:
         await query.edit_message_text(f"Reddedilemedi: {exc}")
         return
 
-    await query.edit_message_text(f"Banka talebi {_req_code(request_id)} reddedildi.")
+    message = f"Banka talebi {_req_code(request_id)} reddedildi."
+    if risk_flagged:
+        message += "\n⚠️ Kullanıcı için risk bayrağı oluşturuldu (çoklu red)."
+    await query.edit_message_text(message)
     if user:
         await context.bot.send_message(
             chat_id=user.telegram_id,
@@ -423,7 +532,11 @@ async def _show_pending_crypto(query, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
     chat_id = query.message.chat_id
-    for req in rows[:40]:
+    settings: Settings = context.application.bot_data["settings"]
+    total_rows = len(rows)
+    for idx, req in enumerate(rows[:40], start=1):
+        eta = idx * max(settings.crypto_queue_eta_min_per_request, 1)
+        queue_text = f"\nSıra: {idx}/{total_rows} | Tahmini: {eta} dk"
         text = (
             f"Kripto Talebi #{req.id}\n"
             f"Talep Kodu: {_req_code(req.id)}\n"
@@ -431,6 +544,7 @@ async def _show_pending_crypto(query, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"Beklenen: {req.expected_trx} TRX\n"
             f"Durum: {_status_text(req.status)}\n"
             f"TX: {req.tx_hash or '-'}"
+            f"{queue_text}"
         )
         markup = approve_reject_keyboard(
             approve_data=f"admin_crypto_ok:{req.id}",
@@ -494,7 +608,11 @@ async def _show_pending_withdrawals(query, context: ContextTypes.DEFAULT_TYPE) -
     )
 
     chat_id = query.message.chat_id
-    for req in rows[:40]:
+    settings: Settings = context.application.bot_data["settings"]
+    total_rows = len(rows)
+    for idx, req in enumerate(rows[:40], start=1):
+        eta = idx * max(settings.withdraw_queue_eta_min_per_request, 1)
+        queue_text = f"\nSıra: {idx}/{total_rows} | Tahmini: {eta} dk"
         text = (
             f"Çekim Talebi #{req.id}\n"
             f"Talep Kodu: {_req_code(req.id)}\n"
@@ -506,6 +624,7 @@ async def _show_pending_withdrawals(query, context: ContextTypes.DEFAULT_TYPE) -
             f"Tutar: {req.amount_coins} BAKİYE\n"
             f"Durum: {_status_text(req.status)}\n"
             f"Oluşturma: {req.created_at:%Y-%m-%d %H:%M}"
+            f"{queue_text}"
         )
         markup = approve_reject_keyboard(
             approve_data=f"admin_withdraw_ok:{req.id}",
@@ -590,6 +709,39 @@ async def _send_daily_report(query, context: ContextTypes.DEFAULT_TYPE) -> None:
     await query.edit_message_text(text, reply_markup=admin_panel_keyboard())
 
 
+async def _send_kpi_report(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with session_scope() as session:
+        kpi = ReportService.build_kpi_dashboard(
+            session, target_day=datetime.now(timezone.utc).date()
+        )
+
+    text = (
+        f"KPI Paneli ({kpi.day:%Y-%m-%d})\n\n"
+        f"Kullanıcılar\n"
+        f"- Toplam kullanıcı: {kpi.total_users}\n"
+        f"- Bugün yeni kullanıcı: {kpi.new_users_today}\n"
+        f"- Son 24s aktif kullanıcı: {kpi.active_users_24h}\n"
+        f"- Toplam sistem bakiyesi: {kpi.total_coin_balance}\n"
+        f"- En yüksek bakiye: {kpi.highest_balance_amount} (TG: {kpi.highest_balance_telegram_id or '-'})\n\n"
+        f"Operasyon\n"
+        f"- Bekleyen banka: {kpi.bank_pending}\n"
+        f"- Bekleyen kripto: {kpi.crypto_pending}\n"
+        f"- Bekleyen çekim: {kpi.withdraw_pending}\n"
+        f"- Açık itiraz kaydı: {kpi.open_tickets}\n"
+        f"- Açık risk bayrağı: {kpi.open_risk_flags}\n\n"
+        f"Bugün Performans\n"
+        f"- Banka onay: {kpi.bank_approved_today}\n"
+        f"- Banka red: {kpi.bank_rejected_today}\n"
+        f"- Banka onay oranı: %{kpi.bank_approval_rate_today:.1f}\n"
+        f"- Banka onaylanan toplam TL: {kpi.bank_approved_try_today:.2f}\n"
+        f"- Çekim tamamlanan: {kpi.withdraw_completed_today}\n"
+        f"- Çekim reddedilen: {kpi.withdraw_rejected_today}\n"
+        f"- Çekim başarı oranı: %{kpi.withdraw_success_rate_today:.1f}\n"
+        f"- Çekim tamamlanan toplam bakiye: {kpi.withdraw_completed_coin_today}"
+    )
+    await query.edit_message_text(text, reply_markup=admin_panel_keyboard())
+
+
 async def _send_csv_export(query, context: ContextTypes.DEFAULT_TYPE) -> None:
     await query.edit_message_text("CSV hazırlanıyor, lütfen bekleyin...", reply_markup=admin_panel_keyboard())
 
@@ -606,6 +758,161 @@ async def _send_csv_export(query, context: ContextTypes.DEFAULT_TYPE) -> None:
         document=InputFile(file_obj, filename=file_obj.name),
         caption="CSV dışa aktarma tamamlandı.",
     )
+
+
+async def _show_open_tickets(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with session_scope() as session:
+        tickets = TicketService.list_open_tickets(session, limit=50)
+
+    if not tickets:
+        await query.edit_message_text("Açık itiraz kaydı bulunmuyor.", reply_markup=admin_panel_keyboard())
+        return
+
+    await query.edit_message_text(
+        f"Açık itiraz kaydı sayısı: {len(tickets)}\nDetaylar aşağıda gönderildi.",
+        reply_markup=admin_panel_keyboard(),
+    )
+
+    chat_id = query.message.chat_id
+    for ticket in tickets[:40]:
+        text = (
+            f"İtiraz #{ticket.id}\n"
+            f"Kod: ITR-#{ticket.id}\n"
+            f"Durum: {_status_text(ticket.status)}\n"
+            f"Kullanıcı TG: {ticket.user.telegram_id if ticket.user else '-'}\n"
+            f"Kullanıcı Adı: @{ticket.user.username if ticket.user and ticket.user.username else '-'}\n"
+            f"Kaynak: {_source_text(ticket.source_type)} DS-#{ticket.source_request_id}\n"
+            f"Mesaj: {ticket.message}\n"
+            f"Tarih: {ticket.created_at:%Y-%m-%d %H:%M}"
+        )
+        markup = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("Kabul Et", callback_data=f"admin_ticket_ok:{ticket.id}"),
+                    InlineKeyboardButton("Reddet", callback_data=f"admin_ticket_no:{ticket.id}"),
+                ]
+            ]
+        )
+        await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
+
+
+async def _resolve_ticket(query, context: ContextTypes.DEFAULT_TYPE, ticket_id: int) -> None:
+    admin_id = query.from_user.id
+    try:
+        with session_scope() as session:
+            ticket = TicketService.resolve_ticket(
+                session,
+                ticket_id=ticket_id,
+                admin_id=admin_id,
+                note="İtiraz incelendi ve kabul edildi.",
+            )
+            user = session.get(User, ticket.user_id)
+    except ValueError as exc:
+        await query.edit_message_text(str(exc), reply_markup=admin_panel_keyboard())
+        return
+
+    await query.edit_message_text(f"İtiraz ITR-#{ticket_id} kabul edildi.", reply_markup=admin_panel_keyboard())
+    if user:
+        await context.bot.send_message(
+            chat_id=user.telegram_id,
+            text=f"İtiraz kaydınız ITR-#{ticket_id} kabul edildi. Detay için destekle iletişime geçebilirsiniz.",
+        )
+
+
+async def _reject_ticket(query, context: ContextTypes.DEFAULT_TYPE, ticket_id: int) -> None:
+    admin_id = query.from_user.id
+    try:
+        with session_scope() as session:
+            ticket = TicketService.reject_ticket(
+                session,
+                ticket_id=ticket_id,
+                admin_id=admin_id,
+                note="İtiraz incelendi ve reddedildi.",
+            )
+            user = session.get(User, ticket.user_id)
+    except ValueError as exc:
+        await query.edit_message_text(str(exc), reply_markup=admin_panel_keyboard())
+        return
+
+    await query.edit_message_text(f"İtiraz ITR-#{ticket_id} reddedildi.", reply_markup=admin_panel_keyboard())
+    if user:
+        await context.bot.send_message(
+            chat_id=user.telegram_id,
+            text=f"İtiraz kaydınız ITR-#{ticket_id} reddedildi.",
+        )
+
+
+async def _show_open_risks(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with session_scope() as session:
+        flags = RiskService.list_open_flags(session, limit=60)
+
+    if not flags:
+        await query.edit_message_text("Açık risk kaydı yok.", reply_markup=admin_panel_keyboard())
+        return
+
+    await query.edit_message_text(
+        f"Açık risk kaydı: {len(flags)}\nDetaylar aşağıda gönderildi.",
+        reply_markup=admin_panel_keyboard(),
+    )
+    chat_id = query.message.chat_id
+    for flag in flags[:40]:
+        text = (
+            f"Risk #{flag.id}\n"
+            f"Skor: {flag.score}/100\n"
+            f"Kaynak: {flag.source}\n"
+            f"Kullanıcı TG: {flag.user.telegram_id if flag.user else '-'}\n"
+            f"Kullanıcı Adı: @{flag.user.username if flag.user and flag.user.username else '-'}\n"
+            f"Talep: {flag.entity_type or '-'} #{flag.entity_id or '-'}\n"
+            f"Gerekçe: {flag.reason}\n"
+            f"Detay: {flag.details or '-'}\n"
+            f"Tarih: {flag.created_at:%Y-%m-%d %H:%M}"
+        )
+        markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Temizle", callback_data=f"admin_risk_clear:{flag.id}")]]
+        )
+        await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
+
+
+async def _resolve_risk(query, context: ContextTypes.DEFAULT_TYPE, risk_id: int) -> None:
+    admin_id = query.from_user.id
+    try:
+        with session_scope() as session:
+            flag = RiskService.resolve_flag(
+                session,
+                flag_id=risk_id,
+                admin_id=admin_id,
+                note="Admin tarafından incelendi.",
+            )
+    except ValueError as exc:
+        await query.edit_message_text(str(exc), reply_markup=admin_panel_keyboard())
+        return
+
+    await query.edit_message_text(
+        f"Risk #{flag.id} kapatıldı.",
+        reply_markup=admin_panel_keyboard(),
+    )
+
+
+async def _run_backup_now(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    result = create_database_backup(settings)
+    if not result.ok or not result.file_path:
+        await query.edit_message_text(
+            f"Yedek alınamadı: {result.message}",
+            reply_markup=admin_panel_keyboard(),
+        )
+        return
+
+    await query.edit_message_text(
+        f"Yedek hazır: {result.file_path.name}",
+        reply_markup=admin_panel_keyboard(),
+    )
+    with result.file_path.open("rb") as fp:
+        await context.bot.send_document(
+            chat_id=query.message.chat_id,
+            document=InputFile(fp, filename=result.file_path.name),
+            caption=f"Manuel yedek tamamlandı. {result.message}",
+        )
 
 
 async def _show_templates_menu(query) -> None:
@@ -668,6 +975,9 @@ def build_admin_conversation_handler() -> ConversationHandler:
             ],
             ADMIN_WAIT_TEMPLATE_CONTENT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_template_content)
+            ],
+            ADMIN_WAIT_BROADCAST_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_broadcast_text)
             ],
         },
         fallbacks=[CommandHandler("cancel", admin_cancel)],

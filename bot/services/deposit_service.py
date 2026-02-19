@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import asc, desc, select
+from sqlalchemy import asc, desc, func, select
 from sqlalchemy.orm import Session, joinedload
 
-from bot.models import CoinPackage, CryptoDepositRequest, DepositRequest, User
+from bot.models import CoinPackage, CryptoDepositRequest, DepositRequest, ReceiptFingerprint, User
 from bot.services.admin_service import AdminService
 from bot.utils.constants import (
     CRYPTO_STATUS_APPROVED,
@@ -86,6 +86,45 @@ class DepositService:
         session.add(request)
         session.flush()
         return request
+
+    @staticmethod
+    def get_bank_queue_position(session: Session, request_id: int) -> tuple[int, int] | None:
+        req = session.get(DepositRequest, request_id)
+        if not req or req.status != DEPOSIT_STATUS_PENDING:
+            return None
+
+        total = int(
+            session.scalar(
+                select(func.count(DepositRequest.id)).where(
+                    DepositRequest.status == DEPOSIT_STATUS_PENDING
+                )
+            )
+            or 0
+        )
+        position = int(
+            session.scalar(
+                select(func.count(DepositRequest.id)).where(
+                    DepositRequest.status == DEPOSIT_STATUS_PENDING,
+                    DepositRequest.id <= request_id,
+                )
+            )
+            or 0
+        )
+        return position, total
+
+    @staticmethod
+    def list_pending_bank_older_than(session: Session, minutes: int) -> list[DepositRequest]:
+        threshold = datetime.now(timezone.utc) - timedelta(minutes=max(minutes, 1))
+        stmt = (
+            select(DepositRequest)
+            .options(joinedload(DepositRequest.user), joinedload(DepositRequest.package))
+            .where(
+                DepositRequest.status == DEPOSIT_STATUS_PENDING,
+                DepositRequest.created_at <= threshold,
+            )
+            .order_by(asc(DepositRequest.id))
+        )
+        return list(session.scalars(stmt).all())
 
     @staticmethod
     def list_pending_bank_requests(session: Session) -> list[DepositRequest]:
@@ -192,6 +231,49 @@ class DepositService:
         return list(session.scalars(stmt).all())
 
     @staticmethod
+    def get_crypto_queue_position(session: Session, request_id: int) -> tuple[int, int] | None:
+        req = session.get(CryptoDepositRequest, request_id)
+        if not req or req.status not in {CRYPTO_STATUS_PENDING_PAYMENT, CRYPTO_STATUS_DETECTED}:
+            return None
+
+        total = int(
+            session.scalar(
+                select(func.count(CryptoDepositRequest.id)).where(
+                    CryptoDepositRequest.status.in_(
+                        [CRYPTO_STATUS_PENDING_PAYMENT, CRYPTO_STATUS_DETECTED]
+                    )
+                )
+            )
+            or 0
+        )
+        position = int(
+            session.scalar(
+                select(func.count(CryptoDepositRequest.id)).where(
+                    CryptoDepositRequest.status.in_(
+                        [CRYPTO_STATUS_PENDING_PAYMENT, CRYPTO_STATUS_DETECTED]
+                    ),
+                    CryptoDepositRequest.id <= request_id,
+                )
+            )
+            or 0
+        )
+        return position, total
+
+    @staticmethod
+    def list_pending_crypto_older_than(session: Session, minutes: int) -> list[CryptoDepositRequest]:
+        threshold = datetime.now(timezone.utc) - timedelta(minutes=max(minutes, 1))
+        stmt = (
+            select(CryptoDepositRequest)
+            .options(joinedload(CryptoDepositRequest.user), joinedload(CryptoDepositRequest.package))
+            .where(
+                CryptoDepositRequest.status.in_([CRYPTO_STATUS_PENDING_PAYMENT, CRYPTO_STATUS_DETECTED]),
+                CryptoDepositRequest.created_at <= threshold,
+            )
+            .order_by(asc(CryptoDepositRequest.id))
+        )
+        return list(session.scalars(stmt).all())
+
+    @staticmethod
     def list_open_crypto_requests_for_detection(session: Session) -> list[CryptoDepositRequest]:
         stmt = (
             select(CryptoDepositRequest)
@@ -204,6 +286,40 @@ class DepositService:
     def known_tx_hashes(session: Session) -> set[str]:
         stmt = select(CryptoDepositRequest.tx_hash).where(CryptoDepositRequest.tx_hash.is_not(None))
         return {v for v in session.scalars(stmt).all() if v}
+
+    @staticmethod
+    def register_receipt_fingerprint(
+        session: Session,
+        user_id: int,
+        file_sha256: str,
+        deposit_request_id: int | None = None,
+    ) -> tuple[ReceiptFingerprint, bool]:
+        fingerprint = session.scalar(
+            select(ReceiptFingerprint).where(ReceiptFingerprint.file_sha256 == file_sha256)
+        )
+        if fingerprint:
+            fingerprint.seen_count += 1
+            fingerprint.last_deposit_request_id = deposit_request_id
+            fingerprint.last_seen_at = datetime.now(timezone.utc)
+            session.flush()
+            return fingerprint, True
+
+        fingerprint = ReceiptFingerprint(
+            file_sha256=file_sha256,
+            user_id=user_id,
+            first_deposit_request_id=deposit_request_id,
+            last_deposit_request_id=deposit_request_id,
+            seen_count=1,
+        )
+        session.add(fingerprint)
+        session.flush()
+        return fingerprint, False
+
+    @staticmethod
+    def find_receipt_fingerprint(session: Session, file_sha256: str) -> ReceiptFingerprint | None:
+        return session.scalar(
+            select(ReceiptFingerprint).where(ReceiptFingerprint.file_sha256 == file_sha256)
+        )
 
     @staticmethod
     def mark_crypto_detected(
@@ -321,6 +437,20 @@ class DepositService:
             .limit(limit)
         )
         return list(session.scalars(stmt).all())
+
+    @staticmethod
+    def count_recent_rejected_bank_for_user(session: Session, user_id: int, hours: int = 24) -> int:
+        threshold = datetime.now(timezone.utc) - timedelta(hours=max(hours, 1))
+        return int(
+            session.scalar(
+                select(func.count(DepositRequest.id)).where(
+                    DepositRequest.user_id == user_id,
+                    DepositRequest.status == DEPOSIT_STATUS_REJECTED,
+                    DepositRequest.updated_at >= threshold,
+                )
+            )
+            or 0
+        )
 
     @staticmethod
     def list_user_crypto_deposits(

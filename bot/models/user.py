@@ -21,3 +21,5 @@ class User(Base):
     crypto_deposit_requests = relationship("CryptoDepositRequest", back_populates="user")
     orders = relationship("Order", back_populates="user")
     withdrawal_requests = relationship("WithdrawalRequest", back_populates="user")
+    risk_flags = relationship("RiskFlag", back_populates="user")
+    support_tickets = relationship("SupportTicket", back_populates="user")

@@ -223,6 +223,10 @@ class AdminService:
         return list(session.scalars(select(MessageTemplate).order_by(asc(MessageTemplate.key))).all())
 
     @staticmethod
+    def list_all_users(session: Session) -> list[User]:
+        return list(session.scalars(select(User).order_by(asc(User.id))).all())
+
+    @staticmethod
     def upsert_template(
         session: Session,
         admin_id: int,

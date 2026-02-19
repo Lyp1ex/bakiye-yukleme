@@ -6,6 +6,10 @@ from bot.models.game import Game
 from bot.models.message_template import MessageTemplate
 from bot.models.order import Order
 from bot.models.product import Product
+from bot.models.receipt_fingerprint import ReceiptFingerprint
+from bot.models.reminder_event import ReminderEvent
+from bot.models.risk_flag import RiskFlag
+from bot.models.support_ticket import SupportTicket
 from bot.models.user import User
 from bot.models.withdrawal_request import WithdrawalRequest
 
@@ -20,4 +24,8 @@ __all__ = [
     "AdminLog",
     "MessageTemplate",
     "WithdrawalRequest",
+    "ReceiptFingerprint",
+    "ReminderEvent",
+    "RiskFlag",
+    "SupportTicket",
 ]

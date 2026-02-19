@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import asc, desc, select
+from sqlalchemy import asc, desc, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from bot.models import User, WithdrawalRequest
@@ -23,6 +23,20 @@ class WithdrawalService:
             select(WithdrawalRequest)
             .options(joinedload(WithdrawalRequest.user))
             .where(WithdrawalRequest.status == WITHDRAWAL_STATUS_PENDING)
+            .order_by(asc(WithdrawalRequest.id))
+        )
+        return list(session.scalars(stmt).all())
+
+    @staticmethod
+    def list_pending_older_than(session: Session, minutes: int) -> list[WithdrawalRequest]:
+        threshold = datetime.now(timezone.utc) - timedelta(minutes=max(minutes, 1))
+        stmt = (
+            select(WithdrawalRequest)
+            .options(joinedload(WithdrawalRequest.user))
+            .where(
+                WithdrawalRequest.status == WITHDRAWAL_STATUS_PENDING,
+                WithdrawalRequest.created_at <= threshold,
+            )
             .order_by(asc(WithdrawalRequest.id))
         )
         return list(session.scalars(stmt).all())
@@ -52,6 +66,31 @@ class WithdrawalService:
             .limit(1)
         )
         return session.scalar(stmt) is not None
+
+    @staticmethod
+    def get_queue_position(session: Session, request_id: int) -> tuple[int, int] | None:
+        req = session.get(WithdrawalRequest, request_id)
+        if not req or req.status != WITHDRAWAL_STATUS_PENDING:
+            return None
+
+        total = int(
+            session.scalar(
+                select(func.count(WithdrawalRequest.id)).where(
+                    WithdrawalRequest.status == WITHDRAWAL_STATUS_PENDING
+                )
+            )
+            or 0
+        )
+        position = int(
+            session.scalar(
+                select(func.count(WithdrawalRequest.id)).where(
+                    WithdrawalRequest.status == WITHDRAWAL_STATUS_PENDING,
+                    WithdrawalRequest.id <= request_id,
+                )
+            )
+            or 0
+        )
+        return position, total
 
     @staticmethod
     def create_full_balance_request(
@@ -177,3 +216,15 @@ class WithdrawalService:
         req.status = WITHDRAWAL_STATUS_COMPLETED
         session.flush()
         return req
+
+    @staticmethod
+    def has_same_iban_from_other_users(session: Session, user_id: int, iban: str) -> bool:
+        stmt = (
+            select(WithdrawalRequest.id)
+            .where(
+                WithdrawalRequest.iban == iban,
+                WithdrawalRequest.user_id != user_id,
+            )
+            .limit(1)
+        )
+        return session.scalar(stmt) is not None

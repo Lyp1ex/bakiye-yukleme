@@ -38,6 +38,12 @@ services:
         value: "5.00"
       - key: RECEIPT_DATE_MAX_DIFF_DAYS
         value: "3"
+      - key: RECEIPT_HASH_CHECK_ENABLED
+        value: "true"
+      - key: RECEIPT_RISK_REJECT_THRESHOLD
+        value: "70"
+      - key: RISK_FLAG_THRESHOLD
+        value: "40"
       - key: TRON_CHECK_INTERVAL_SEC
         value: "45"
       - key: MIN_BALANCE_AMOUNT
@@ -46,5 +52,29 @@ services:
         value: "250000"
       - key: BALANCE_PAYMENT_RATE
         value: "0.20"
+      - key: BANK_QUEUE_ETA_MIN_PER_REQUEST
+        value: "7"
+      - key: CRYPTO_QUEUE_ETA_MIN_PER_REQUEST
+        value: "5"
+      - key: WITHDRAW_QUEUE_ETA_MIN_PER_REQUEST
+        value: "12"
+      - key: REMINDER_ENABLED
+        value: "true"
+      - key: REMINDER_INTERVAL_SEC
+        value: "1800"
+      - key: REMINDER_MIN_AGE_MINUTES
+        value: "20"
+      - key: REMINDER_COOLDOWN_MINUTES
+        value: "60"
+      - key: AUTO_BACKUP_ENABLED
+        value: "true"
+      - key: BACKUP_HOUR_UTC
+        value: "3"
+      - key: BACKUP_MINUTE_UTC
+        value: "15"
+      - key: BACKUP_RETENTION_DAYS
+        value: "14"
+      - key: BACKUP_DIR
+        value: "./backups"
       - key: LOG_LEVEL
         value: INFO

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import time, timezone as dt_timezone
 from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import logging
@@ -19,6 +20,8 @@ from bot.crypto.watcher import tron_watcher_job
 from bot.database.bootstrap import initialize_database
 from bot.database.session import session_scope
 from bot.handlers import build_admin_conversation_handler, build_user_conversation_handler
+from bot.admin.notifier import send_message_to_admins
+from bot.services import ReminderService, create_database_backup, send_backup_to_admins
 from bot.services.template_service import TemplateService
 from bot.texts.messages import (
     DEFAULT_TEXT_TEMPLATES,
@@ -37,6 +40,93 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.effective_message.reply_text("Beklenmeyen bir hata oluştu. Lütfen tekrar deneyin.")
         except Exception:
             logger.exception("Kullanıcıya hata mesajı gönderilemedi")
+
+
+def _template_text(key: str) -> str:
+    fallback = DEFAULT_TEXT_TEMPLATES.get(key, key)
+    with session_scope() as session:
+        return TemplateService.get_template(session, key=key, fallback=fallback)
+
+
+async def pending_reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    if not settings.reminder_enabled:
+        return
+
+    with session_scope() as session:
+        targets = (
+            ReminderService.list_due_bank(session, settings.reminder_min_age_minutes)
+            + ReminderService.list_due_crypto(session, settings.reminder_min_age_minutes)
+            + ReminderService.list_due_withdraw(session, settings.reminder_min_age_minutes)
+        )
+        eligible = [
+            t
+            for t in targets
+            if ReminderService.can_send(
+                session,
+                entity_type=t.entity_type,
+                entity_id=t.entity_id,
+                cooldown_minutes=settings.reminder_cooldown_minutes,
+            )
+        ]
+
+    for target in eligible:
+        request_code = f"DS-#{target.entity_id}"
+        if target.entity_type == "bank_deposit":
+            tmpl = _template_text("reminder_bank_text")
+            user_text = tmpl.format(request_code=request_code) if "{request_code}" in tmpl else tmpl
+            admin_text = f"Hatırlatma: Banka talebi {request_code} beklemede."
+        elif target.entity_type == "crypto_deposit":
+            tmpl = _template_text("reminder_crypto_text")
+            user_text = tmpl.format(request_code=request_code) if "{request_code}" in tmpl else tmpl
+            admin_text = f"Hatırlatma: Kripto talebi {request_code} beklemede."
+        else:
+            tmpl = _template_text("reminder_withdraw_text")
+            user_text = tmpl.format(request_code=request_code) if "{request_code}" in tmpl else tmpl
+            admin_text = f"Hatırlatma: Çekim talebi {request_code} beklemede."
+
+        sent_any = False
+        try:
+            await context.bot.send_message(chat_id=target.user_telegram_id, text=user_text)
+            sent_any = True
+        except Exception:
+            logger.exception("Kullanıcıya hatırlatma gönderilemedi", extra={"request_code": request_code})
+
+        try:
+            await send_message_to_admins(context.application, settings, text=admin_text)
+            sent_any = True
+        except Exception:
+            logger.exception("Adminlere hatırlatma gönderilemedi", extra={"request_code": request_code})
+
+        if sent_any:
+            with session_scope() as session:
+                ReminderService.mark_sent(
+                    session,
+                    entity_type=target.entity_type,
+                    entity_id=target.entity_id,
+                )
+
+
+async def daily_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    if not settings.auto_backup_enabled:
+        return
+
+    result = create_database_backup(settings)
+    if not result.ok or not result.file_path:
+        await send_message_to_admins(
+            context.application,
+            settings,
+            text=f"Yedek alma başarısız: {result.message}",
+        )
+        return
+
+    await send_backup_to_admins(context.application, settings, result.file_path)
+    await send_message_to_admins(
+        context.application,
+        settings,
+        text=f"Günlük yedek tamamlandı: {result.file_path.name}",
+    )
 
 
 
@@ -61,6 +151,21 @@ def build_application() -> Application:
         interval=max(settings.tron_check_interval_sec, 30),
         first=20,
         name="tron_watcher",
+    )
+    app.job_queue.run_repeating(
+        pending_reminder_job,
+        interval=max(settings.reminder_interval_sec, 300),
+        first=60,
+        name="pending_reminder_job",
+    )
+    app.job_queue.run_daily(
+        daily_backup_job,
+        time=time(
+            hour=max(0, min(settings.backup_hour_utc, 23)),
+            minute=max(0, min(settings.backup_minute_utc, 59)),
+            tzinfo=dt_timezone.utc,
+        ),
+        name="daily_backup_job",
     )
 
     return app

@@ -24,6 +24,10 @@ class ReceiptCheckResult:
     amount_match: bool | None
     date_text: str
     date_match: bool | None
+    iban_text: str
+    iban_match: bool | None
+    risk_score: int
+    risk_flags: list[str]
     summary: str
 
 
@@ -41,6 +45,12 @@ def _to_decimal(value: Any) -> Decimal | None:
 def _to_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
+
+
+def _normalize_iban(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).replace(" ", "").upper().strip()
     try:
         raw = str(value).strip().replace("Z", "+00:00")
         dt = datetime.fromisoformat(raw)
@@ -55,6 +65,7 @@ def verify_receipt_image(
     settings: Settings,
     image_bytes: bytes,
     expected_amount_try: Decimal,
+    expected_iban: str | None = None,
 ) -> ReceiptCheckResult:
     if not settings.receipt_ai_enabled:
         return ReceiptCheckResult(
@@ -65,6 +76,10 @@ def verify_receipt_image(
             amount_match=None,
             date_text="-",
             date_match=None,
+            iban_text="-",
+            iban_match=None,
+            risk_score=0,
+            risk_flags=[],
             summary="AI dekont kontrolü kapalı.",
         )
 
@@ -77,6 +92,10 @@ def verify_receipt_image(
             amount_match=None,
             date_text="-",
             date_match=None,
+            iban_text="-",
+            iban_match=None,
+            risk_score=20,
+            risk_flags=["openai_key_missing"],
             summary="OPENAI_API_KEY yok, AI dekont kontrolü yapılamadı.",
         )
 
@@ -87,13 +106,14 @@ def verify_receipt_image(
         system_prompt = (
             "Sen bir banka dekont doğrulama asistanısın. "
             "Sadece JSON döndür. "
-            "Alanlar: is_receipt(bool), amount_text(str), date_iso(str), reasoning(str)."
+            "Alanlar: is_receipt(bool), amount_text(str), date_iso(str), iban_text(str), reasoning(str)."
         )
         user_prompt = (
             "Görsel bir banka dekontu mu kontrol et. "
             f"Beklenen ödeme tutarı (TL): {expected_amount_try}. "
+            f"Beklenen alıcı IBAN: {expected_iban or '-'} "
             "Mümkünse dekont üzerindeki ödeme tutarını amount_text alanına, "
-            "işlem tarihini ISO formatında date_iso alanına yaz."
+            "işlem tarihini ISO formatında date_iso alanına, alıcı IBAN bilgisini iban_text alanına yaz."
         )
 
         payload = {
@@ -135,12 +155,17 @@ def verify_receipt_image(
             amount_match=None,
             date_text="-",
             date_match=None,
+            iban_text="-",
+            iban_match=None,
+            risk_score=30,
+            risk_flags=["ai_failure"],
             summary="AI dekont kontrolü başarısız oldu, manuel incelemeye düştü.",
         )
 
     is_receipt = bool(parsed.get("is_receipt"))
     amount_text = str(parsed.get("amount_text") or "-").strip()
     date_text = str(parsed.get("date_iso") or "-").strip()
+    iban_text = str(parsed.get("iban_text") or "-").strip()
     reasoning = str(parsed.get("reasoning") or "").strip()
 
     found_amount = _to_decimal(amount_text)
@@ -156,14 +181,37 @@ def verify_receipt_image(
         day_diff = abs((now.date() - found_date.date()).days)
         date_match = day_diff <= settings.receipt_date_max_diff_days
 
+    expected_iban_norm = _normalize_iban(expected_iban or "")
+    found_iban_norm = _normalize_iban(iban_text if iban_text != "-" else "")
+    iban_match: bool | None = None
+    if expected_iban_norm and found_iban_norm:
+        iban_match = expected_iban_norm == found_iban_norm
+
     pass_checks = bool(
         is_receipt
         and (amount_match is not False)
         and (date_match is not False)
+        and (iban_match is not False)
     )
 
+    risk_score = 0
+    risk_flags: list[str] = []
+    if not is_receipt:
+        risk_score += 45
+        risk_flags.append("not_receipt")
+    if amount_match is False:
+        risk_score += 30
+        risk_flags.append("amount_mismatch")
+    if date_match is False:
+        risk_score += 20
+        risk_flags.append("date_mismatch")
+    if iban_match is False:
+        risk_score += 25
+        risk_flags.append("iban_mismatch")
+    risk_score = max(0, min(risk_score, 100))
+
     if settings.receipt_ai_strict:
-        passed = pass_checks
+        passed = pass_checks and risk_score < settings.receipt_risk_reject_threshold
     else:
         passed = True
 
@@ -171,7 +219,11 @@ def verify_receipt_image(
         f"Dekont: {'Evet' if is_receipt else 'Hayır'}",
         f"Tutar: {amount_text} ({'uyumlu' if amount_match else 'uyumsuz' if amount_match is False else 'belirsiz'})",
         f"Tarih: {date_text} ({'uyumlu' if date_match else 'uyumsuz' if date_match is False else 'belirsiz'})",
+        f"IBAN: {iban_text} ({'uyumlu' if iban_match else 'uyumsuz' if iban_match is False else 'belirsiz'})",
+        f"Risk Skoru: {risk_score}/100",
     ]
+    if risk_flags:
+        summary_parts.append(f"Risk Bayrakları: {', '.join(risk_flags)}")
     if reasoning:
         summary_parts.append(f"Not: {reasoning}")
 
@@ -183,5 +235,9 @@ def verify_receipt_image(
         amount_match=amount_match,
         date_text=date_text,
         date_match=date_match,
+        iban_text=iban_text,
+        iban_match=iban_match,
+        risk_score=risk_score,
+        risk_flags=risk_flags,
         summary=" | ".join(summary_parts),
     )
