@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 import hashlib
+import logging
 import re
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -31,8 +32,10 @@ from bot.keyboards.common import (
 )
 from bot.models import User
 from bot.services import (
+    AuditService,
     DepositService,
     RiskService,
+    StatusCardService,
     TicketService,
     TemplateService,
     UserService,
@@ -40,6 +43,8 @@ from bot.services import (
     verify_receipt_image,
 )
 from bot.texts.messages import DEFAULT_TEXT_TEMPLATES
+
+logger = logging.getLogger(__name__)
 
 (
     MENU,
@@ -181,6 +186,33 @@ def _next_step_for_status(status: str, flow: str) -> str:
         if status == "rejected":
             return "Tutar bakiyenize iade edildi."
     return "İşlem takibi için destekle iletişime geçin."
+
+
+async def _sync_card_safely(
+    context: ContextTypes.DEFAULT_TYPE,
+    settings: Settings,
+    flow_type: str,
+    request_id: int,
+    *,
+    event_text: str | None = None,
+    user_notice: str | None = None,
+    sla_level: int | None = None,
+) -> None:
+    try:
+        await StatusCardService.sync_card(
+            context.application,
+            settings,
+            flow_type,
+            request_id,
+            event_text=event_text,
+            user_notice=user_notice,
+            sla_level=sla_level,
+        )
+    except Exception:
+        logger.exception(
+            "Canlı talep kartı güncellemesi başarısız",
+            extra={"flow_type": flow_type, "request_id": request_id},
+        )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -388,10 +420,59 @@ async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE
     duplicate_detected = False
     duplicate_owner_tg: int | None = None
     reject_by_hash_check = False
+    blocked_reason_key: str | None = None
     req = None
     queue_info: tuple[int, int] | None = None
     with session_scope() as session:
         user = UserService.get_or_create_user(session, update.effective_user)
+
+        blocking_flag = RiskService.get_blocking_open_flag(
+            session,
+            user_id=user.id,
+            threshold=settings.risk_block_threshold,
+        )
+        if blocking_flag:
+            blocked_reason_key = "risk_block_text"
+            AuditService.log_user_action(
+                session,
+                user_telegram_id=update.effective_user.id,
+                action="bank_request_blocked_by_risk",
+                entity_type="bank_deposit",
+                entity_id=None,
+                details=f"risk_flag_id={blocking_flag.id}; score={blocking_flag.score}",
+            )
+
+        recent_request_count = DepositService.count_recent_bank_requests_for_user(
+            session,
+            user_id=user.id,
+            minutes=settings.bank_request_rate_limit_window_minutes,
+        )
+        if recent_request_count >= settings.bank_request_rate_limit_count:
+            RiskService.create_flag(
+                session,
+                user_id=user.id,
+                score=88,
+                source="bank_request_rate_limit",
+                reason="Kısa sürede çok sayıda banka talebi gönderildi.",
+                details=(
+                    f"recent_count={recent_request_count}; "
+                    f"window_min={settings.bank_request_rate_limit_window_minutes}"
+                ),
+                entity_type="bank_deposit",
+                entity_id=None,
+            )
+            blocked_reason_key = "rate_limit_block_text"
+            AuditService.log_user_action(
+                session,
+                user_telegram_id=update.effective_user.id,
+                action="bank_request_blocked_by_rate_limit",
+                entity_type="bank_deposit",
+                entity_id=None,
+                details=(
+                    f"recent_count={recent_request_count}; "
+                    f"window_min={settings.bank_request_rate_limit_window_minutes}"
+                ),
+            )
 
         if settings.receipt_hash_check_enabled:
             existing_fingerprint = DepositService.find_receipt_fingerprint(session, file_sha256)
@@ -401,10 +482,20 @@ async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE
                 duplicate_owner_tg = duplicate_user.telegram_id if duplicate_user else None
                 ai_risk_score = min(100, ai_risk_score + 60)
                 ai_risk_flags.append("duplicate_receipt_hash")
+                if existing_fingerprint.user_id != user.id:
+                    blocked_reason_key = "duplicate_receipt_block_text"
+                    AuditService.log_user_action(
+                        session,
+                        user_telegram_id=update.effective_user.id,
+                        action="bank_request_blocked_duplicate_receipt",
+                        entity_type="bank_deposit",
+                        entity_id=None,
+                        details=f"duplicate_owner_tg={duplicate_owner_tg or '-'}; sha256={file_sha256}",
+                    )
                 if settings.receipt_ai_strict:
                     reject_by_hash_check = True
 
-        if reject_by_hash_check:
+        if reject_by_hash_check or blocked_reason_key:
             pass
         else:
             package = DepositService.get_or_create_dynamic_package(
@@ -443,12 +534,24 @@ async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE
                     entity_type="bank_deposit",
                     entity_id=req.id,
                 )
+            AuditService.log_user_action(
+                session,
+                user_telegram_id=update.effective_user.id,
+                action="bank_request_created",
+                entity_type="bank_deposit",
+                entity_id=req.id,
+                details=f"request_code={_req_code(req.id)}; amount={int(requested_amount)}; payment_try={payment_try}",
+            )
 
         waiting_text = TemplateService.get_template(
             session,
             key="deposit_waiting",
             fallback=DEFAULT_TEXT_TEMPLATES["deposit_waiting"],
         )
+
+    if blocked_reason_key:
+        await update.effective_message.reply_text(_get_text(blocked_reason_key))
+        return WAIT_BANK_RECEIPT
 
     if reject_by_hash_check:
         await update.effective_message.reply_text(_get_text("receipt_ai_reject_text"))
@@ -519,6 +622,14 @@ async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE
         file_type=file_type,
         caption=caption,
         reply_markup=markup,
+    )
+    await _sync_card_safely(
+        context,
+        settings,
+        "bank",
+        req.id,
+        event_text="Dekont alındı, admin inceleme sırasına alındı.",
+        user_notice=_get_text("status_card_created_text"),
     )
 
     context.user_data.clear()
@@ -640,9 +751,25 @@ async def handle_withdraw_confirm_callback(update: Update, context: ContextTypes
 
     queue_info: tuple[int, int] | None = None
     reused_iban_flag = None
+    risk_block_text = _get_text("risk_block_text")
     try:
         with session_scope() as session:
             user = UserService.get_or_create_user(session, update.effective_user)
+            blocking_flag = RiskService.get_blocking_open_flag(
+                session,
+                user_id=user.id,
+                threshold=context.application.bot_data["settings"].risk_block_threshold,
+            )
+            if blocking_flag:
+                AuditService.log_user_action(
+                    session,
+                    user_telegram_id=update.effective_user.id,
+                    action="withdraw_request_blocked_by_risk",
+                    entity_type="withdrawal",
+                    entity_id=None,
+                    details=f"risk_flag_id={blocking_flag.id}; score={blocking_flag.score}",
+                )
+                raise ValueError(risk_block_text)
             req = WithdrawalService.create_full_balance_request(
                 session,
                 user_id=user.id,
@@ -656,6 +783,14 @@ async def handle_withdraw_confirm_callback(update: Update, context: ContextTypes
                 user_id=user.id,
                 iban=req.iban,
                 withdrawal_request_id=req.id,
+            )
+            AuditService.log_user_action(
+                session,
+                user_telegram_id=update.effective_user.id,
+                action="withdraw_request_created",
+                entity_type="withdrawal",
+                entity_id=req.id,
+                details=f"request_code={_req_code(req.id)}; amount={req.amount_coins}; iban={req.iban}",
             )
     except ValueError as exc:
         context.user_data.clear()
@@ -712,6 +847,14 @@ async def handle_withdraw_confirm_callback(update: Update, context: ContextTypes
         text=admin_text,
         reply_markup=admin_markup,
     )
+    await _sync_card_safely(
+        context,
+        settings,
+        "withdraw",
+        req.id,
+        event_text="Çekim talebi oluşturuldu, admin ödeme sırasına alındı.",
+        user_notice=_get_text("status_card_created_text"),
+    )
 
     context.user_data.clear()
     return MENU
@@ -744,6 +887,14 @@ async def handle_menu_media(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
             return MENU
         req = WithdrawalService.submit_proof(session, waiting_req.id, file_id, file_type)
+        AuditService.log_user_action(
+            session,
+            user_telegram_id=update.effective_user.id,
+            action="withdraw_proof_submitted",
+            entity_type="withdrawal",
+            entity_id=req.id,
+            details=f"request_code={_req_code(req.id)}; file_type={file_type}",
+        )
 
     await update.effective_message.reply_text(_get_text("withdraw_proof_received_text"), reply_markup=main_menu_keyboard())
 
@@ -763,6 +914,102 @@ async def handle_menu_media(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         caption=caption,
         reply_markup=None,
     )
+    await _sync_card_safely(
+        context,
+        settings,
+        "withdraw",
+        req.id,
+        event_text="Kullanıcı ödeme ekran görüntüsünü yükledi, talep tamamlandı.",
+    )
+    return MENU
+
+
+async def handle_status_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return MENU
+
+    await query.answer()
+    data = query.data or ""
+    settings: Settings = context.application.bot_data["settings"]
+
+    if data == "user_card_refresh_all":
+        with session_scope() as session:
+            user = UserService.get_or_create_user(session, update.effective_user)
+            bank = DepositService.list_user_bank_deposits(session, user.id, limit=1)
+            crypto = DepositService.list_user_crypto_deposits(session, user.id, limit=1)
+            withdraw = WithdrawalService.list_user_requests(session, user.id, limit=1)
+
+        if bank:
+            await _sync_card_safely(context, settings, "bank", bank[0].id)
+        if crypto:
+            await _sync_card_safely(context, settings, "crypto", crypto[0].id)
+        if withdraw:
+            await _sync_card_safely(context, settings, "withdraw", withdraw[0].id)
+        await query.answer("Canlı kartlar güncellendi.", show_alert=True)
+        return MENU
+
+    if data.startswith("user_card_refresh:"):
+        parts = data.split(":")
+        if len(parts) != 3:
+            await query.answer("Geçersiz kart isteği", show_alert=True)
+            return MENU
+        flow_type = parts[1].strip()
+        try:
+            request_id = int(parts[2])
+        except ValueError:
+            await query.answer("Geçersiz kart isteği", show_alert=True)
+            return MENU
+
+        with session_scope() as session:
+            user = UserService.get_or_create_user(session, update.effective_user)
+            card = StatusCardService.get_card(session, flow_type, request_id)
+            is_owner = bool(card and card.user_id == user.id) or StatusCardService.is_request_owned_by_user(
+                session,
+                flow_type=flow_type,
+                request_id=request_id,
+                user_id=user.id,
+            )
+            if not is_owner:
+                await query.answer("Bu karta erişim yetkiniz yok.", show_alert=True)
+                return MENU
+
+        await _sync_card_safely(context, settings, flow_type, request_id)
+        await query.answer("Talep kartı güncellendi.", show_alert=False)
+        return MENU
+
+    if data.startswith("user_card_appeal:"):
+        parts = data.split(":")
+        if len(parts) != 3:
+            await query.answer("Geçersiz kart isteği", show_alert=True)
+            return MENU
+        flow_type = parts[1].strip()
+        try:
+            request_id = int(parts[2])
+        except ValueError:
+            await query.answer("Geçersiz kart isteği", show_alert=True)
+            return MENU
+
+        with session_scope() as session:
+            user = UserService.get_or_create_user(session, update.effective_user)
+            is_rejected = StatusCardService.is_rejected_for_appeal(
+                session,
+                flow_type=flow_type,
+                request_id=request_id,
+                user_id=user.id,
+            )
+
+        if not is_rejected:
+            await query.answer("İtiraz sadece reddedilen taleplerde açılabilir.", show_alert=True)
+            return MENU
+
+        context.user_data["appeal_source_type"] = flow_type
+        context.user_data["appeal_source_request_id"] = request_id
+        await query.message.reply_text(
+            f"Seçilen talep: {_req_code(request_id)} ({_source_text(flow_type)})\n{_get_text('appeal_ask_message_text')}"
+        )
+        return WAIT_APPEAL_MESSAGE
+
     return MENU
 
 
@@ -835,6 +1082,7 @@ async def show_request_status(update: Update, context: ContextTypes.DEFAULT_TYPE
         return MENU
 
     settings: Settings = context.application.bot_data["settings"]
+    status_buttons: list[list[InlineKeyboardButton]] = []
     lines = [_get_text("request_status_header_text"), ""]
     if bank:
         item = bank[0]
@@ -845,6 +1093,10 @@ async def show_request_status(update: Update, context: ContextTypes.DEFAULT_TYPE
             eta = p * max(settings.bank_queue_eta_min_per_request, 1)
             lines.append(_render_text("queue_info_text", position=p, total=t, eta_minutes=eta))
         lines.append("")
+        status_buttons.append(
+            [InlineKeyboardButton("Banka Kartını Yenile", callback_data=f"user_card_refresh:bank:{item.id}")]
+        )
+        await _sync_card_safely(context, settings, "bank", item.id)
     if crypto:
         item = crypto[0]
         lines.append(f"Kripto: {_req_code(item.id)} | {_status_text(item.status)}")
@@ -854,6 +1106,10 @@ async def show_request_status(update: Update, context: ContextTypes.DEFAULT_TYPE
             eta = p * max(settings.crypto_queue_eta_min_per_request, 1)
             lines.append(_render_text("queue_info_text", position=p, total=t, eta_minutes=eta))
         lines.append("")
+        status_buttons.append(
+            [InlineKeyboardButton("Kripto Kartını Yenile", callback_data=f"user_card_refresh:crypto:{item.id}")]
+        )
+        await _sync_card_safely(context, settings, "crypto", item.id)
     if withdrawal:
         item = withdrawal[0]
         lines.append(f"Çekim: {_req_code(item.id)} | {_status_text(item.status)}")
@@ -863,6 +1119,10 @@ async def show_request_status(update: Update, context: ContextTypes.DEFAULT_TYPE
             eta = p * max(settings.withdraw_queue_eta_min_per_request, 1)
             lines.append(_render_text("queue_info_text", position=p, total=t, eta_minutes=eta))
         lines.append("")
+        status_buttons.append(
+            [InlineKeyboardButton("Çekim Kartını Yenile", callback_data=f"user_card_refresh:withdraw:{item.id}")]
+        )
+        await _sync_card_safely(context, settings, "withdraw", item.id)
     if tickets:
         ticket = tickets[0]
         lines.append(
@@ -871,7 +1131,15 @@ async def show_request_status(update: Update, context: ContextTypes.DEFAULT_TYPE
         if ticket.admin_note:
             lines.append(f"Not: {ticket.admin_note}")
 
-    await update.effective_message.reply_text("\n".join(lines), reply_markup=main_menu_keyboard())
+    if status_buttons:
+        status_buttons.append([InlineKeyboardButton("Canlı Kartları Yenile", callback_data="user_card_refresh_all")])
+        await update.effective_message.reply_text(
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(status_buttons),
+        )
+        await update.effective_message.reply_text("Ana menü:", reply_markup=main_menu_keyboard())
+    else:
+        await update.effective_message.reply_text("\n".join(lines), reply_markup=main_menu_keyboard())
     return MENU
 
 
@@ -1045,6 +1313,14 @@ async def handle_appeal_message(update: Update, context: ContextTypes.DEFAULT_TY
                 source_request_id=source_request_id,
                 message=message,
             )
+            AuditService.log_user_action(
+                session,
+                user_telegram_id=update.effective_user.id,
+                action="appeal_created",
+                entity_type="support_ticket",
+                entity_id=ticket.id,
+                details=f"source={source_type}; request_code={_req_code(source_request_id)}",
+            )
     except ValueError as exc:
         await update.effective_message.reply_text(str(exc))
         return WAIT_APPEAL_MESSAGE
@@ -1095,6 +1371,7 @@ def build_user_conversation_handler() -> ConversationHandler:
                 CommandHandler("start", start),
                 MessageHandler(filters.Regex(MENU_REGEX), menu_router),
                 MessageHandler(filters.PHOTO | filters.Document.ALL, handle_menu_media),
+                CallbackQueryHandler(handle_status_card_callback, pattern=r"^user_card_"),
                 CallbackQueryHandler(handle_appeal_pick_callback, pattern=r"^user_appeal_"),
             ],
             WAIT_BALANCE_AMOUNT: [

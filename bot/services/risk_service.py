@@ -70,6 +70,24 @@ class RiskService:
         return list(session.scalars(stmt).all())
 
     @staticmethod
+    def get_blocking_open_flag(
+        session: Session,
+        user_id: int,
+        threshold: int,
+    ) -> RiskFlag | None:
+        stmt = (
+            select(RiskFlag)
+            .where(
+                RiskFlag.user_id == user_id,
+                RiskFlag.is_resolved.is_(False),
+                RiskFlag.score >= max(int(threshold), 0),
+            )
+            .order_by(desc(RiskFlag.score), asc(RiskFlag.id))
+            .limit(1)
+        )
+        return session.scalar(stmt)
+
+    @staticmethod
     def resolve_flag(
         session: Session,
         flag_id: int,
@@ -131,4 +149,3 @@ class RiskService:
             entity_type="withdrawal",
             entity_id=withdrawal_request_id,
         )
-

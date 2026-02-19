@@ -23,3 +23,4 @@ class User(Base):
     withdrawal_requests = relationship("WithdrawalRequest", back_populates="user")
     risk_flags = relationship("RiskFlag", back_populates="user")
     support_tickets = relationship("SupportTicket", back_populates="user")
+    request_status_cards = relationship("RequestStatusCard", back_populates="user")

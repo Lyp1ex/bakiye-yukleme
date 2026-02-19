@@ -30,6 +30,9 @@ class Settings:
     receipt_hash_check_enabled: bool
     receipt_risk_reject_threshold: int
     risk_flag_threshold: int
+    risk_block_threshold: int
+    bank_request_rate_limit_count: int
+    bank_request_rate_limit_window_minutes: int
     database_url: str
     log_level: str
     tron_check_interval_sec: int
@@ -43,6 +46,11 @@ class Settings:
     reminder_interval_sec: int
     reminder_min_age_minutes: int
     reminder_cooldown_minutes: int
+    sla_watchdog_enabled: bool
+    sla_watchdog_interval_sec: int
+    sla_level1_minutes: int
+    sla_level2_minutes: int
+    sla_level3_minutes: int
     auto_backup_enabled: bool
     backup_hour_utc: int
     backup_minute_utc: int
@@ -121,6 +129,12 @@ def get_settings() -> Settings:
         receipt_hash_check_enabled=_parse_bool(os.getenv("RECEIPT_HASH_CHECK_ENABLED", "true")),
         receipt_risk_reject_threshold=_parse_int(os.getenv("RECEIPT_RISK_REJECT_THRESHOLD"), 70),
         risk_flag_threshold=_parse_int(os.getenv("RISK_FLAG_THRESHOLD"), 40),
+        risk_block_threshold=_parse_int(os.getenv("RISK_BLOCK_THRESHOLD"), 80),
+        bank_request_rate_limit_count=_parse_int(os.getenv("BANK_REQUEST_RATE_LIMIT_COUNT"), 3),
+        bank_request_rate_limit_window_minutes=_parse_int(
+            os.getenv("BANK_REQUEST_RATE_LIMIT_WINDOW_MINUTES"),
+            30,
+        ),
         database_url=os.getenv("DATABASE_URL", "sqlite:///./bot.db").strip(),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         tron_check_interval_sec=_parse_int(os.getenv("TRON_CHECK_INTERVAL_SEC"), 45),
@@ -137,6 +151,11 @@ def get_settings() -> Settings:
         reminder_interval_sec=_parse_int(os.getenv("REMINDER_INTERVAL_SEC"), 1800),
         reminder_min_age_minutes=_parse_int(os.getenv("REMINDER_MIN_AGE_MINUTES"), 20),
         reminder_cooldown_minutes=_parse_int(os.getenv("REMINDER_COOLDOWN_MINUTES"), 60),
+        sla_watchdog_enabled=_parse_bool(os.getenv("SLA_WATCHDOG_ENABLED", "true")),
+        sla_watchdog_interval_sec=_parse_int(os.getenv("SLA_WATCHDOG_INTERVAL_SEC"), 300),
+        sla_level1_minutes=_parse_int(os.getenv("SLA_LEVEL1_MINUTES"), 15),
+        sla_level2_minutes=_parse_int(os.getenv("SLA_LEVEL2_MINUTES"), 30),
+        sla_level3_minutes=_parse_int(os.getenv("SLA_LEVEL3_MINUTES"), 60),
         auto_backup_enabled=_parse_bool(os.getenv("AUTO_BACKUP_ENABLED", "true")),
         backup_hour_utc=_parse_int(os.getenv("BACKUP_HOUR_UTC"), 3),
         backup_minute_utc=_parse_int(os.getenv("BACKUP_MINUTE_UTC"), 15),

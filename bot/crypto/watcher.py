@@ -10,6 +10,7 @@ from bot.admin.notifier import send_message_to_admins
 from bot.config.settings import Settings
 from bot.database.session import session_scope
 from bot.models import User
+from bot.services import AuditService, StatusCardService
 from bot.services.deposit_service import DepositService
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,13 @@ async def tron_watcher_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 tx_hash,
                 tx.get("from_address"),
             )
+            AuditService.log_system_action(
+                session,
+                action="crypto_tx_detected",
+                entity_type="crypto_deposit",
+                entity_id=detected.id,
+                details=f"tx_hash={tx_hash}; amount_trx={tx['amount_trx']}",
+            )
             user = session.get(User, detected.user_id)
             if user:
                 matches.append(
@@ -98,3 +106,14 @@ async def tron_watcher_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             )
         except Exception:
             logger.exception("Tespit edilen TRX için kullanıcı bildirimi gönderilemedi", extra=item)
+
+        try:
+            await StatusCardService.sync_card(
+                application,
+                settings,
+                "crypto",
+                item["request_id"],
+                event_text="TRX transferi tespit edildi, admin onayı bekleniyor.",
+            )
+        except Exception:
+            logger.exception("Kripto canlı talep kartı güncellenemedi", extra=item)

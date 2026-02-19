@@ -72,6 +72,26 @@ DEFAULT_TEXT_TEMPLATES: dict[str, str] = {
     "reminder_bank_text": "Banka talebiniz ({request_code}) halen incelemede. Lütfen bekleyin.",
     "reminder_crypto_text": "Kripto talebiniz ({request_code}) halen işlemde. Lütfen bekleyin.",
     "reminder_withdraw_text": "Çekim talebiniz ({request_code}) halen incelemede. Lütfen bekleyin.",
+    "sla_delay_user_text": (
+        "Talebinizde yoğunluk tespit edildi.\n"
+        "Talep: {request_code}\n"
+        "Gecikme Seviyesi: SLA-{level}\n"
+        "Bekleme Süresi: {age_minutes} dk\n"
+        "Takip için canlı talep kartınızı yenileyebilirsiniz."
+    ),
+    "status_card_created_text": "Canlı talep kartınız oluşturuldu. Durumu kart üzerinden anlık takip edebilirsiniz.",
+    "risk_block_text": (
+        "Hesabınız şu an güvenlik incelemesinde olduğu için yeni talep alınamıyor.\n"
+        "Lütfen destek ekibiyle iletişime geçin."
+    ),
+    "rate_limit_block_text": (
+        "Kısa sürede çok fazla yükleme talebi gönderildi.\n"
+        "Lütfen bir süre sonra tekrar deneyin."
+    ),
+    "duplicate_receipt_block_text": (
+        "Bu dekont daha önce farklı bir talepte kullanılmış görünüyor.\n"
+        "Güvenlik nedeniyle talep durduruldu. Lütfen yeni dekont yükleyin."
+    ),
     "withdraw_zero_balance_text": "Çekim için bakiyeniz bulunmuyor.",
     "withdraw_pending_exists_text": "Zaten bekleyen bir çekim talebiniz var. Önce o talep sonuçlanmalı.",
     "withdraw_start_text": (
@@ -214,6 +234,11 @@ TEMPLATE_LABELS: dict[str, str] = {
     "reminder_bank_text": "Banka Hatırlatma Mesajı",
     "reminder_crypto_text": "Kripto Hatırlatma Mesajı",
     "reminder_withdraw_text": "Çekim Hatırlatma Mesajı",
+    "sla_delay_user_text": "SLA Gecikme Bildirimi",
+    "status_card_created_text": "Canlı Kart Oluşturma Mesajı",
+    "risk_block_text": "Risk Blokaj Mesajı",
+    "rate_limit_block_text": "Hız Limiti Blokaj Mesajı",
+    "duplicate_receipt_block_text": "Mükerrer Dekont Blokaj Mesajı",
     "withdraw_zero_balance_text": "Çekim Bakiye Yok",
     "withdraw_pending_exists_text": "Çekim Bekleyen Talep Uyarısı",
     "withdraw_start_text": "Çekim Başlangıç Mesajı",

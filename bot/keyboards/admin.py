@@ -16,6 +16,8 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("Toplu Duyuru", callback_data="admin_broadcast")],
             [InlineKeyboardButton("İtiraz Talepleri", callback_data="admin_ticket_list")],
             [InlineKeyboardButton("Şüpheli Kullanıcılar", callback_data="admin_risk_list")],
+            [InlineKeyboardButton("SLA Geciken Talepler", callback_data="admin_sla_list")],
+            [InlineKeyboardButton("Denetim Kayıtları", callback_data="admin_audit_list")],
             [InlineKeyboardButton("Yedek Al (Şimdi)", callback_data="admin_backup_now")],
             [InlineKeyboardButton("Kullanıcı Ara", callback_data="admin_search")],
             [InlineKeyboardButton("Manuel Bakiye Ekle/Çıkar", callback_data="admin_manual")],

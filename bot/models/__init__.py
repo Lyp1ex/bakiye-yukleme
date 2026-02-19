@@ -9,6 +9,7 @@ from bot.models.product import Product
 from bot.models.receipt_fingerprint import ReceiptFingerprint
 from bot.models.reminder_event import ReminderEvent
 from bot.models.risk_flag import RiskFlag
+from bot.models.request_status_card import RequestStatusCard
 from bot.models.support_ticket import SupportTicket
 from bot.models.user import User
 from bot.models.withdrawal_request import WithdrawalRequest
@@ -27,5 +28,6 @@ __all__ = [
     "ReceiptFingerprint",
     "ReminderEvent",
     "RiskFlag",
+    "RequestStatusCard",
     "SupportTicket",
 ]

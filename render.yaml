@@ -46,6 +46,12 @@ services:
         value: "70"
       - key: RISK_FLAG_THRESHOLD
         value: "40"
+      - key: RISK_BLOCK_THRESHOLD
+        value: "80"
+      - key: BANK_REQUEST_RATE_LIMIT_COUNT
+        value: "3"
+      - key: BANK_REQUEST_RATE_LIMIT_WINDOW_MINUTES
+        value: "30"
       - key: TRON_CHECK_INTERVAL_SEC
         value: "45"
       - key: MIN_BALANCE_AMOUNT
@@ -67,6 +73,16 @@ services:
       - key: REMINDER_MIN_AGE_MINUTES
         value: "20"
       - key: REMINDER_COOLDOWN_MINUTES
+        value: "60"
+      - key: SLA_WATCHDOG_ENABLED
+        value: "true"
+      - key: SLA_WATCHDOG_INTERVAL_SEC
+        value: "300"
+      - key: SLA_LEVEL1_MINUTES
+        value: "15"
+      - key: SLA_LEVEL2_MINUTES
+        value: "30"
+      - key: SLA_LEVEL3_MINUTES
         value: "60"
       - key: AUTO_BACKUP_ENABLED
         value: "true"

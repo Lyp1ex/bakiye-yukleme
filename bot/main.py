@@ -21,7 +21,13 @@ from bot.database.bootstrap import initialize_database
 from bot.database.session import session_scope
 from bot.handlers import build_admin_conversation_handler, build_user_conversation_handler
 from bot.admin.notifier import send_message_to_admins
-from bot.services import ReminderService, create_database_backup, send_backup_to_admins
+from bot.services import (
+    AuditService,
+    ReminderService,
+    StatusCardService,
+    create_database_backup,
+    send_backup_to_admins,
+)
 from bot.services.template_service import TemplateService
 from bot.texts.messages import (
     DEFAULT_TEXT_TEMPLATES,
@@ -107,6 +113,69 @@ async def pending_reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
 
 
+async def sla_watchdog_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    if not settings.sla_watchdog_enabled:
+        return
+
+    with session_scope() as session:
+        escalations = StatusCardService.prepare_sla_escalations(session, settings)
+        for esc in escalations:
+            AuditService.log_system_action(
+                session,
+                action="sla_escalation",
+                entity_type=f"{esc.flow_type}_request",
+                entity_id=esc.request_id,
+                details=f"request_code={esc.request_code}; level={esc.level}; age_min={esc.age_minutes}",
+            )
+
+    if not escalations:
+        return
+
+    user_tmpl = _template_text("sla_delay_user_text")
+    for esc in escalations:
+        user_notice = user_tmpl
+        if "{request_code}" in user_notice:
+            user_notice = user_notice.format(
+                request_code=esc.request_code,
+                level=esc.level,
+                age_minutes=esc.age_minutes,
+            )
+        try:
+            await StatusCardService.sync_card(
+                context.application,
+                settings,
+                esc.flow_type,
+                esc.request_id,
+                user_notice=user_notice,
+                sla_level=esc.level,
+            )
+        except Exception:
+            logger.exception(
+                "SLA kart güncellemesi başarısız",
+                extra={"request_code": esc.request_code},
+            )
+
+        try:
+            await send_message_to_admins(
+                context.application,
+                settings,
+                text=(
+                    "SLA Gecikme Uyarısı\n"
+                    f"Talep: {esc.request_code}\n"
+                    f"İşlem: {esc.flow_type}\n"
+                    f"Durum: {esc.status_text}\n"
+                    f"Gecikme: {esc.age_minutes} dk\n"
+                    f"Seviye: SLA-{esc.level}"
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "SLA admin bildirimi gönderilemedi",
+                extra={"request_code": esc.request_code},
+            )
+
+
 async def daily_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
     if not settings.auto_backup_enabled:
@@ -157,6 +226,12 @@ def build_application() -> Application:
         interval=max(settings.reminder_interval_sec, 300),
         first=60,
         name="pending_reminder_job",
+    )
+    app.job_queue.run_repeating(
+        sla_watchdog_job,
+        interval=max(settings.sla_watchdog_interval_sec, 120),
+        first=90,
+        name="sla_watchdog_job",
     )
     app.job_queue.run_daily(
         daily_backup_job,

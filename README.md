@@ -20,8 +20,11 @@ Bu proje Telegram üzerinde çalışan, tamamen **admin onaylı** bakiye yüklem
 - Destek butonu: `t.me/donsalvatoree`
 - Talep kodu formatı: `DS-#ID`
 - Talep Durumu ekranı (son banka/kripto/çekim adımları + sıradaki adım)
+- Canlı Talep Kartı (tek mesajda anlık durum + zaman çizelgesi + yenile/itiraz)
+- SLA gecikme motoru (15/30/60 dk seviyeli otomatik uyarı)
 - Sıra + tahmini süre gösterimi (kullanıcı taleplerinde)
 - Otomatik hatırlatma (bekleyen taleplerde kullanıcı + admin)
+- Risk/anti-suistimal engeli (yüksek riskli hesap blokajı, hız limiti, mükerrer dekont blokajı)
 - Kurallar ve SSS menüleri
 - İtiraz sistemi (reddedilen taleplere kullanıcıdan itiraz)
 - AI dekont kontrolü (opsiyonel):
@@ -40,6 +43,8 @@ Bu proje Telegram üzerinde çalışan, tamamen **admin onaylı** bakiye yüklem
   - Toplu duyuru
   - İtiraz kayıt yönetimi
   - Şüpheli kullanıcı bayrakları
+  - SLA geciken talepleri izleme
+  - Denetim kayıtları (kim, ne zaman, ne yaptı)
   - Manuel yedek alma
   - Kullanıcı arama
   - Manuel bakiye ekleme/çıkarma
@@ -140,6 +145,9 @@ RECEIPT_DATE_MAX_DIFF_DAYS=3
 RECEIPT_HASH_CHECK_ENABLED=true
 RECEIPT_RISK_REJECT_THRESHOLD=70
 RISK_FLAG_THRESHOLD=40
+RISK_BLOCK_THRESHOLD=80
+BANK_REQUEST_RATE_LIMIT_COUNT=3
+BANK_REQUEST_RATE_LIMIT_WINDOW_MINUTES=30
 DATABASE_URL=sqlite:///./bot.db
 LOG_LEVEL=INFO
 TRON_CHECK_INTERVAL_SEC=45
@@ -153,6 +161,11 @@ REMINDER_ENABLED=true
 REMINDER_INTERVAL_SEC=1800
 REMINDER_MIN_AGE_MINUTES=20
 REMINDER_COOLDOWN_MINUTES=60
+SLA_WATCHDOG_ENABLED=true
+SLA_WATCHDOG_INTERVAL_SEC=300
+SLA_LEVEL1_MINUTES=15
+SLA_LEVEL2_MINUTES=30
+SLA_LEVEL3_MINUTES=60
 AUTO_BACKUP_ENABLED=true
 BACKUP_HOUR_UTC=3
 BACKUP_MINUTE_UTC=15

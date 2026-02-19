@@ -65,6 +65,35 @@ class DepositService:
         return pkg
 
     @staticmethod
+    def count_pending_bank_requests_for_user(session: Session, user_id: int) -> int:
+        return int(
+            session.scalar(
+                select(func.count(DepositRequest.id)).where(
+                    DepositRequest.user_id == user_id,
+                    DepositRequest.status == DEPOSIT_STATUS_PENDING,
+                )
+            )
+            or 0
+        )
+
+    @staticmethod
+    def count_recent_bank_requests_for_user(
+        session: Session,
+        user_id: int,
+        minutes: int = 30,
+    ) -> int:
+        threshold = datetime.now(timezone.utc) - timedelta(minutes=max(minutes, 1))
+        return int(
+            session.scalar(
+                select(func.count(DepositRequest.id)).where(
+                    DepositRequest.user_id == user_id,
+                    DepositRequest.created_at >= threshold,
+                )
+            )
+            or 0
+        )
+
+    @staticmethod
     def create_bank_deposit_request(
         session: Session,
         user_id: int,

@@ -23,9 +23,11 @@ from bot.keyboards.admin import admin_panel_keyboard, approve_reject_keyboard
 from bot.models import User
 from bot.services import (
     AdminService,
+    AuditService,
     DepositService,
     ReportService,
     RiskService,
+    StatusCardService,
     TicketService,
     WithdrawalService,
     create_database_backup,
@@ -219,6 +221,14 @@ async def admin_callback_router(update: Update, context: ContextTypes.DEFAULT_TY
 
     if data == "admin_risk_list":
         await _show_open_risks(query, context)
+        return ADMIN_MENU
+
+    if data == "admin_sla_list":
+        await _show_sla_overdue(query, context)
+        return ADMIN_MENU
+
+    if data == "admin_audit_list":
+        await _show_audit_logs(query, context)
         return ADMIN_MENU
 
     if data.startswith("admin_risk_clear:"):
@@ -520,6 +530,13 @@ async def _approve_bank(query, context: ContextTypes.DEFAULT_TYPE, request_id: i
             user.telegram_id,
             f"Banka yükleme talebiniz {_req_code(request_id)} onaylandı. Bakiye eklendi.",
         )
+    await StatusCardService.sync_card(
+        context.application,
+        context.application.bot_data["settings"],
+        "bank",
+        request_id,
+        event_text="Admin onayı verildi, bakiye başarıyla yüklendi.",
+    )
     await _edit_query_message_safely(query, f"Banka talebi {_req_code(request_id)} onaylandı.")
 
 
@@ -561,6 +578,13 @@ async def _reject_bank(query, context: ContextTypes.DEFAULT_TYPE, request_id: in
             user.telegram_id,
             f"Banka yükleme talebiniz {_req_code(request_id)} reddedildi. Destek ile iletişime geçin.",
         )
+    await StatusCardService.sync_card(
+        context.application,
+        context.application.bot_data["settings"],
+        "bank",
+        request_id,
+        event_text="Admin tarafından reddedildi. İsterseniz itiraz kaydı açabilirsiniz.",
+    )
     await _edit_query_message_safely(query, message)
 
 
@@ -615,6 +639,13 @@ async def _approve_crypto(query, context: ContextTypes.DEFAULT_TYPE, request_id:
             user.telegram_id,
             f"Kripto yükleme talebiniz {_req_code(request_id)} onaylandı. Bakiye eklendi.",
         )
+    await StatusCardService.sync_card(
+        context.application,
+        context.application.bot_data["settings"],
+        "crypto",
+        request_id,
+        event_text="Admin onayı verildi, bakiye hesabınıza yansıtıldı.",
+    )
     await _edit_query_message_safely(query, f"Kripto talebi {_req_code(request_id)} onaylandı.")
 
 
@@ -639,6 +670,13 @@ async def _reject_crypto(query, context: ContextTypes.DEFAULT_TYPE, request_id: 
             user.telegram_id,
             f"Kripto yükleme talebiniz {_req_code(request_id)} reddedildi. Destek ile iletişime geçin.",
         )
+    await StatusCardService.sync_card(
+        context.application,
+        context.application.bot_data["settings"],
+        "crypto",
+        request_id,
+        event_text="Admin tarafından reddedildi. İsterseniz itiraz kaydı açabilirsiniz.",
+    )
     await _edit_query_message_safely(query, f"Kripto talebi {_req_code(request_id)} reddedildi.")
 
 
@@ -700,6 +738,13 @@ async def _approve_withdrawal(query, context: ContextTypes.DEFAULT_TYPE, request
                 "Ödeme yapıldıysa lütfen ekran görüntüsünü (SS) bu sohbete gönderin."
             ),
         )
+    await StatusCardService.sync_card(
+        context.application,
+        context.application.bot_data["settings"],
+        "withdraw",
+        request_id,
+        event_text="Admin ödemeyi onayladı. Şimdi ekran görüntüsü (SS) bekleniyor.",
+    )
     await _edit_query_message_safely(query, f"Çekim talebi {_req_code(request_id)} onaylandı.")
 
 
@@ -727,6 +772,13 @@ async def _reject_withdrawal(query, context: ContextTypes.DEFAULT_TYPE, request_
                 f"{req.amount_coins} BAKİYE hesabınıza geri eklendi."
             ),
         )
+    await StatusCardService.sync_card(
+        context.application,
+        context.application.bot_data["settings"],
+        "withdraw",
+        request_id,
+        event_text="Çekim talebi reddedildi, tutar bakiyenize geri iade edildi.",
+    )
     await _edit_query_message_safely(
         query,
         f"Çekim talebi {_req_code(request_id)} reddedildi. Tutar kullanıcıya iade edildi.",
@@ -924,6 +976,48 @@ async def _show_open_risks(query, context: ContextTypes.DEFAULT_TYPE) -> None:
             [[InlineKeyboardButton("Temizle", callback_data=f"admin_risk_clear:{flag.id}")]]
         )
         await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
+
+
+async def _show_sla_overdue(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    with session_scope() as session:
+        rows = StatusCardService.list_overdue_cards(
+            session,
+            settings,
+            min_age_minutes=max(settings.sla_level1_minutes, 1),
+            limit=40,
+        )
+
+    if not rows:
+        await query.edit_message_text("SLA eşiğini aşan talep yok.", reply_markup=admin_panel_keyboard())
+        return
+
+    lines = [f"SLA Geciken Talepler ({len(rows)})", ""]
+    for item in rows:
+        lines.append(
+            f"{item.request_code} | {_source_text(item.flow_type)} | {item.status_text} | {item.age_minutes} dk | SLA-{item.level}"
+        )
+    await query.edit_message_text("\n".join(lines[:80]), reply_markup=admin_panel_keyboard())
+
+
+async def _show_audit_logs(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with session_scope() as session:
+        logs = AuditService.list_recent(session, limit=35)
+
+    if not logs:
+        await query.edit_message_text("Denetim kaydı bulunmuyor.", reply_markup=admin_panel_keyboard())
+        return
+
+    lines = ["Denetim Kayıtları (son 35)", ""]
+    for row in logs:
+        ts = row.created_at.strftime("%d.%m %H:%M") if row.created_at else "-"
+        actor = AuditService.actor_text(row)
+        entity_id = row.entity_id if row.entity_id is not None else "-"
+        lines.append(f"{ts} | {actor} | {row.action} | {row.entity_type}:{entity_id}")
+        if row.details:
+            lines.append(f"  -> {row.details[:120]}")
+
+    await query.edit_message_text("\n".join(lines[:100]), reply_markup=admin_panel_keyboard())
 
 
 async def _resolve_risk(query, context: ContextTypes.DEFAULT_TYPE, risk_id: int) -> None:
