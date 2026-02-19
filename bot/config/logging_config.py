@@ -21,11 +21,11 @@ REDACT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         "[REDACTED_BOT_TOKEN]",
     ),
     (
-        re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
-        "[REDACTED_OPENAI_KEY]",
+        re.compile(r"\bAIza[0-9A-Za-z_-]{20,}\b"),
+        "[REDACTED_GEMINI_KEY]",
     ),
     (
-        re.compile(r"(?i)\b(BOT_TOKEN|OPENAI_API_KEY|TRON_PRIVATE_KEY)\s*=\s*[^\s,;]+"),
+        re.compile(r"(?i)\b(BOT_TOKEN|GEMINI_API_KEY|TRON_PRIVATE_KEY)\s*=\s*[^\s,;]+"),
         r"\1=[REDACTED]",
     ),
 )

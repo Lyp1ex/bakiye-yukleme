@@ -21,9 +21,6 @@ class Settings:
     tron_wallet_address: str
     tron_private_key: str
     crypto_auto_approve: bool
-    receipt_ai_provider: str
-    openai_model: str
-    openai_api_key: str
     gemini_api_key: str
     gemini_model: str
     receipt_ai_enabled: bool
@@ -112,9 +109,6 @@ def get_settings() -> Settings:
         tron_wallet_address=os.getenv("TRON_WALLET_ADDRESS", "").strip(),
         tron_private_key=os.getenv("TRON_PRIVATE_KEY", "").strip(),
         crypto_auto_approve=_parse_bool(os.getenv("CRYPTO_AUTO_APPROVE", "false")),
-        receipt_ai_provider=os.getenv("RECEIPT_AI_PROVIDER", "auto").strip().lower(),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip(),
-        openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
         gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash").strip(),
         receipt_ai_enabled=_parse_bool(os.getenv("RECEIPT_AI_ENABLED", "false")),

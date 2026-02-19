@@ -28,12 +28,6 @@ services:
         sync: false
       - key: CRYPTO_AUTO_APPROVE
         value: "false"
-      - key: RECEIPT_AI_PROVIDER
-        value: "auto"
-      - key: OPENAI_MODEL
-        value: "gpt-4o-mini"
-      - key: OPENAI_API_KEY
-        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
