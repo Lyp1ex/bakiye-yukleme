@@ -51,6 +51,16 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=True)
 
 
+class DropNoisyLoggers(logging.Filter):
+    BLOCKED_PREFIXES = ("httpx", "httpcore")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not any(
+            record.name == prefix or record.name.startswith(f"{prefix}.")
+            for prefix in self.BLOCKED_PREFIXES
+        )
+
+
 
 def setup_logging(level: str = "INFO") -> None:
     root = logging.getLogger()
@@ -58,9 +68,6 @@ def setup_logging(level: str = "INFO") -> None:
 
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.setFormatter(JsonFormatter())
+    handler.addFilter(DropNoisyLoggers())
 
     root.handlers = [handler]
-
-    # Telegram API endpointlerini yazan HTTP client info loglarini kapat.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
