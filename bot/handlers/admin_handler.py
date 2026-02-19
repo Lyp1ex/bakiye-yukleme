@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from decimal import InvalidOperation
+from io import BytesIO
 import logging
+from datetime import datetime, timezone
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -17,7 +19,7 @@ from bot.config.settings import Settings
 from bot.database.session import session_scope
 from bot.keyboards.admin import admin_panel_keyboard, approve_reject_keyboard
 from bot.models import User
-from bot.services import AdminService, DepositService, WithdrawalService
+from bot.services import AdminService, DepositService, ReportService, WithdrawalService
 from bot.texts.messages import TEMPLATE_LABELS
 
 logger = logging.getLogger(__name__)
@@ -119,6 +121,14 @@ async def admin_callback_router(update: Update, context: ContextTypes.DEFAULT_TY
     if data.startswith("admin_withdraw_no:"):
         request_id = int(data.split(":", 1)[1])
         await _reject_withdrawal(query, context, request_id)
+        return ADMIN_MENU
+
+    if data == "admin_daily_report":
+        await _send_daily_report(query, context)
+        return ADMIN_MENU
+
+    if data == "admin_export_csv":
+        await _send_csv_export(query, context)
         return ADMIN_MENU
 
     if data == "admin_search":
@@ -549,6 +559,53 @@ async def _reject_withdrawal(query, context: ContextTypes.DEFAULT_TYPE, request_
                 f"{req.amount_coins} BAKİYE hesabınıza geri eklendi."
             ),
         )
+
+
+async def _send_daily_report(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with session_scope() as session:
+        report = ReportService.build_daily_finance_report(
+            session, target_day=datetime.now(timezone.utc).date()
+        )
+
+    text = (
+        f"Günlük Finans Raporu ({report.day:%Y-%m-%d})\n\n"
+        f"Banka\n"
+        f"- Bekleyen: {report.bank_pending}\n"
+        f"- Bugün onaylanan: {report.bank_approved_today}\n"
+        f"- Bugün reddedilen: {report.bank_rejected_today}\n"
+        f"- Bugün onaylanan toplam TL: {report.bank_approved_try_total:.2f}\n"
+        f"- Bugün eklenen toplam BAKİYE: {report.bank_approved_coin_total}\n\n"
+        f"Kripto\n"
+        f"- Bekleyen: {report.crypto_pending}\n"
+        f"- Bugün onaylanan: {report.crypto_approved_today}\n"
+        f"- Bugün reddedilen: {report.crypto_rejected_today}\n"
+        f"- Bugün onaylanan toplam TRX: {report.crypto_approved_trx_total:.6f}\n"
+        f"- Bugün eklenen toplam BAKİYE: {report.crypto_approved_coin_total}\n\n"
+        f"Çekim\n"
+        f"- Bekleyen: {report.withdraw_pending}\n"
+        f"- Bugün tamamlanan: {report.withdraw_completed_today}\n"
+        f"- Bugün reddedilen: {report.withdraw_rejected_today}\n"
+        f"- Bugün tamamlanan toplam BAKİYE: {report.withdraw_completed_coin_total}"
+    )
+    await query.edit_message_text(text, reply_markup=admin_panel_keyboard())
+
+
+async def _send_csv_export(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await query.edit_message_text("CSV hazırlanıyor, lütfen bekleyin...", reply_markup=admin_panel_keyboard())
+
+    with session_scope() as session:
+        data = ReportService.export_all_transactions_csv(session)
+
+    file_obj = BytesIO(data)
+    file_obj.name = f"ds_finans_raporu_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}.csv"
+    file_obj.seek(0)
+
+    chat_id = query.message.chat_id
+    await context.bot.send_document(
+        chat_id=chat_id,
+        document=InputFile(file_obj, filename=file_obj.name),
+        caption="CSV dışa aktarma tamamlandı.",
+    )
 
 
 async def _show_templates_menu(query) -> None:

@@ -18,6 +18,8 @@ services:
         sync: false
       - key: SUPPORT_USERNAME
         value: donsalvatoree
+      - key: APP_LAST_UPDATED
+        value: "19.02.2026"
       - key: TRON_RPC_URL
         value: https://api.trongrid.io
       - key: TRON_WALLET_ADDRESS
@@ -26,6 +28,16 @@ services:
         sync: false
       - key: CRYPTO_AUTO_APPROVE
         value: "false"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: RECEIPT_AI_ENABLED
+        value: "false"
+      - key: RECEIPT_AI_STRICT
+        value: "false"
+      - key: RECEIPT_AMOUNT_TOLERANCE_TRY
+        value: "5.00"
+      - key: RECEIPT_DATE_MAX_DIFF_DAYS
+        value: "3"
       - key: TRON_CHECK_INTERVAL_SEC
         value: "45"
       - key: MIN_BALANCE_AMOUNT

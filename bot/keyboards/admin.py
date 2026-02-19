@@ -10,6 +10,8 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("Bekleyen Banka Talepleri", callback_data="admin_bank_list")],
             [InlineKeyboardButton("Bekleyen Kripto Talepleri", callback_data="admin_crypto_list")],
             [InlineKeyboardButton("Bekleyen Çekim Talepleri", callback_data="admin_withdraw_list")],
+            [InlineKeyboardButton("Günlük Finans Raporu", callback_data="admin_daily_report")],
+            [InlineKeyboardButton("CSV Dışa Aktar", callback_data="admin_export_csv")],
             [InlineKeyboardButton("Kullanıcı Ara", callback_data="admin_search")],
             [InlineKeyboardButton("Manuel Bakiye Ekle/Çıkar", callback_data="admin_manual")],
             [InlineKeyboardButton("Mesaj Şablonları", callback_data="admin_templates")],

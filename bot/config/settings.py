@@ -16,10 +16,16 @@ class Settings:
     admin_panel_token: str
     iban_text: str
     support_username: str
+    app_last_updated: str
     tron_rpc_url: str
     tron_wallet_address: str
     tron_private_key: str
     crypto_auto_approve: bool
+    openai_api_key: str
+    receipt_ai_enabled: bool
+    receipt_ai_strict: bool
+    receipt_amount_tolerance_try: Decimal
+    receipt_date_max_diff_days: int
     database_url: str
     log_level: str
     tron_check_interval_sec: int
@@ -82,10 +88,19 @@ def get_settings() -> Settings:
             "IBAN: TR00 0000 0000 0000 0000 0000 00\\nAlıcı: Hesap Sahibi",
         ),
         support_username=os.getenv("SUPPORT_USERNAME", "donsalvatoree").strip().lstrip("@"),
+        app_last_updated=os.getenv("APP_LAST_UPDATED", "19.02.2026").strip(),
         tron_rpc_url=os.getenv("TRON_RPC_URL", "https://api.trongrid.io").rstrip("/"),
         tron_wallet_address=os.getenv("TRON_WALLET_ADDRESS", "").strip(),
         tron_private_key=os.getenv("TRON_PRIVATE_KEY", "").strip(),
         crypto_auto_approve=_parse_bool(os.getenv("CRYPTO_AUTO_APPROVE", "false")),
+        openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
+        receipt_ai_enabled=_parse_bool(os.getenv("RECEIPT_AI_ENABLED", "false")),
+        receipt_ai_strict=_parse_bool(os.getenv("RECEIPT_AI_STRICT", "false")),
+        receipt_amount_tolerance_try=_parse_decimal(
+            os.getenv("RECEIPT_AMOUNT_TOLERANCE_TRY"),
+            Decimal("5.00"),
+        ),
+        receipt_date_max_diff_days=_parse_int(os.getenv("RECEIPT_DATE_MAX_DIFF_DAYS"), 3),
         database_url=os.getenv("DATABASE_URL", "sqlite:///./bot.db").strip(),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         tron_check_interval_sec=_parse_int(os.getenv("TRON_CHECK_INTERVAL_SEC"), 45),

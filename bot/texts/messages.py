@@ -32,9 +32,37 @@ DEFAULT_TEXT_TEMPLATES: dict[str, str] = {
         "Referans Kodunuz: {request_code_hint}"
     ),
     "upload_receipt_only_text": "Lütfen dekontu fotoğraf veya belge olarak gönderin.",
+    "receipt_ai_reject_text": (
+        "Dekont otomatik kontrolden geçemedi.\n"
+        "Lütfen net bir dekont görseli gönderin (tarih ve tutar okunaklı olmalı)."
+    ),
     "deposit_waiting": "Talebiniz alındı. Bakiye yüklemesi admin onayı bekliyor.",
     "deposit_received_text": "Dekont alındı. Talep kodunuz: {request_code}\n{waiting_text}",
     "support_contact_text": "Soru ve manuel işlemler için buradan yazabilirsiniz: {support_url}",
+    "rules_text": (
+        "İşlem Kuralları\n"
+        "1) Bakiye yükleme admin onayı olmadan tamamlanmaz.\n"
+        "2) Ödeme tutarı, talep edilen bakiyenin %{rate_percent} oranıdır.\n"
+        "3) Minimum bakiye talebi: {min_amount}\n"
+        "4) Maksimum bakiye talebi: {max_amount}\n"
+        "5) Çekim talebinde sistem, mevcut bakiyenin tamamını çeker.\n"
+        "6) Yanlış/eksik dekont talepleri reddedilebilir.\n\n"
+        "Destek: @{support_username}"
+    ),
+    "faq_text": (
+        "Sık Sorulan Sorular\n"
+        "S: Yükleme ne kadar sürer?\n"
+        "C: Genelde 5-20 dakika içinde admin onayına göre tamamlanır.\n\n"
+        "S: Çekim nasıl yapılır?\n"
+        "C: Çekim Talebi menüsünden ad-soyad, IBAN ve banka adı girilir.\n\n"
+        "S: Neden talep kodu var?\n"
+        "C: Her işlem DS koduyla takip edilir.\n\n"
+        "S: Destekle nasıl iletişim kurarım?\n"
+        "C: Menüdeki Soru Sor / Destek butonunu kullanın."
+    ),
+    "request_status_header_text": "Talep Durumu (Son Kayıtlar):",
+    "request_status_empty_text": "Henüz kayıtlı talebiniz bulunmuyor.",
+    "request_status_next_step_text": "Sıradaki adım: {next_step}",
     "withdraw_zero_balance_text": "Çekim için bakiyeniz bulunmuyor.",
     "withdraw_pending_exists_text": "Zaten bekleyen bir çekim talebiniz var. Önce o talep sonuçlanmalı.",
     "withdraw_start_text": (
@@ -159,9 +187,15 @@ TEMPLATE_LABELS: dict[str, str] = {
     "invalid_balance_amount_text": "Geçersiz Tutar Uyarısı",
     "payment_instruction_text": "Ödeme Talimatı",
     "upload_receipt_only_text": "Dekont Uyarısı",
+    "receipt_ai_reject_text": "Dekont AI Red Mesajı",
     "deposit_waiting": "Yükleme Bekleme Mesajı",
     "deposit_received_text": "Dekont Alındı Mesajı",
     "support_contact_text": "Destek Mesajı",
+    "rules_text": "Kurallar Metni",
+    "faq_text": "SSS Metni",
+    "request_status_header_text": "Talep Durumu Başlığı",
+    "request_status_empty_text": "Talep Durumu Boş Mesajı",
+    "request_status_next_step_text": "Talep Durumu Sonraki Adım",
     "withdraw_zero_balance_text": "Çekim Bakiye Yok",
     "withdraw_pending_exists_text": "Çekim Bekleyen Talep Uyarısı",
     "withdraw_start_text": "Çekim Başlangıç Mesajı",

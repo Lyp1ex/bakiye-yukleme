@@ -20,11 +20,20 @@ from bot.keyboards.common import (
     MENU_BAKIYE,
     MENU_CEKIM,
     MENU_DESTEK,
+    MENU_DURUM,
     MENU_GECMIS,
+    MENU_KURALLAR,
+    MENU_SSS,
     MENU_YUKLEME,
     main_menu_keyboard,
 )
-from bot.services import DepositService, TemplateService, UserService, WithdrawalService
+from bot.services import (
+    DepositService,
+    TemplateService,
+    UserService,
+    WithdrawalService,
+    verify_receipt_image,
+)
 from bot.texts.messages import DEFAULT_TEXT_TEMPLATES
 
 (
@@ -37,7 +46,7 @@ from bot.texts.messages import DEFAULT_TEXT_TEMPLATES
     WAIT_WITHDRAW_CONFIRM,
 ) = range(7)
 
-_MENU_ITEMS = [MENU_BAKIYE, MENU_YUKLEME, MENU_CEKIM, MENU_GECMIS, MENU_DESTEK]
+_MENU_ITEMS = [MENU_BAKIYE, MENU_YUKLEME, MENU_CEKIM, MENU_DURUM, MENU_GECMIS, MENU_KURALLAR, MENU_SSS, MENU_DESTEK]
 MENU_REGEX = r"^(" + "|".join(re.escape(item) for item in _MENU_ITEMS) + r")$"
 
 STATUS_MAP_TR = {
@@ -109,6 +118,35 @@ def _is_valid_iban(text: str) -> bool:
     return len(iban) == 26 and iban.startswith("TR") and iban[2:].isdigit()
 
 
+def _next_step_for_status(status: str, flow: str) -> str:
+    if flow == "bank":
+        if status == "pending":
+            return "Admin dekontu inceliyor."
+        if status == "approved":
+            return "Yükleme tamamlandı."
+        if status == "rejected":
+            return "Destek ile iletişime geçin."
+    if flow == "crypto":
+        if status == "pending_payment":
+            return "TRX transferi bekleniyor."
+        if status == "detected":
+            return "Transfer tespit edildi, admin onayı bekleniyor."
+        if status == "approved":
+            return "Yükleme tamamlandı."
+        if status == "rejected":
+            return "Destek ile iletişime geçin."
+    if flow == "withdraw":
+        if status == "pending":
+            return "Admin çekim talebinizi inceliyor."
+        if status == "paid_waiting_proof":
+            return "Ödeme sonrası SS yükleyin."
+        if status == "completed":
+            return "Çekim tamamlandı."
+        if status == "rejected":
+            return "Tutar bakiyenize iade edildi."
+    return "İşlem takibi için destekle iletişime geçin."
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not update.effective_user or not update.effective_message:
         return MENU
@@ -117,8 +155,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         UserService.get_or_create_user(session, update.effective_user)
 
     settings: Settings = context.application.bot_data["settings"]
+    welcome_text = _render_text("welcome_text", support_username=f"@{settings.support_username}")
+    welcome_text = (
+        f"{welcome_text}\n"
+        f"Son güncelleme: {settings.app_last_updated}\n"
+        "Tüm işlemler kayıt altındadır."
+    )
     await update.effective_message.reply_text(
-        _render_text("welcome_text", support_username=f"@{settings.support_username}"),
+        welcome_text,
         reply_markup=main_menu_keyboard(),
     )
     return MENU
@@ -143,16 +187,26 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return await start_balance_loading(update, context)
     if text == MENU_CEKIM:
         return await start_withdrawal(update, context)
+    if text == MENU_DURUM:
+        return await show_request_status(update, context)
     if text == MENU_GECMIS:
         return await show_history(update, context)
+    if text == MENU_KURALLAR:
+        return await show_rules(update, context)
+    if text == MENU_SSS:
+        return await show_faq(update, context)
     if text == MENU_DESTEK:
         return await show_support(update, context)
 
     if update.effective_message:
+        settings: Settings = context.application.bot_data["settings"]
         await update.effective_message.reply_text(
             _get_text("use_menu_buttons_text"),
-            reply_markup=main_menu_keyboard(),
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("Desteğe Git", url=_support_url(settings))]]
+            ),
         )
+        await update.effective_message.reply_text("Ana menü aşağıdadır.", reply_markup=main_menu_keyboard())
     return MENU
 
 
@@ -235,19 +289,49 @@ async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     file_id: str | None = None
     file_type = "photo"
+    file_mime_type: str | None = "image/jpeg"
 
     if update.effective_message.photo:
         file_id = update.effective_message.photo[-1].file_id
         file_type = "photo"
+        file_mime_type = "image/jpeg"
     elif update.effective_message.document:
         file_id = update.effective_message.document.file_id
         file_type = "document"
+        file_mime_type = update.effective_message.document.mime_type
 
     if not file_id:
         await update.effective_message.reply_text(_get_text("upload_receipt_only_text"))
         return WAIT_BANK_RECEIPT
 
     payment_try = Decimal(str(payment_try_raw))
+    settings: Settings = context.application.bot_data["settings"]
+
+    receipt_check_summary = "AI dekont kontrolü uygulanmadı."
+    if settings.receipt_ai_enabled:
+        if file_mime_type and file_mime_type.startswith("image/"):
+            try:
+                tg_file = await context.bot.get_file(file_id)
+                file_bytes = await tg_file.download_as_bytearray()
+                check = verify_receipt_image(
+                    settings=settings,
+                    image_bytes=bytes(file_bytes),
+                    expected_amount_try=payment_try,
+                )
+                receipt_check_summary = check.summary
+                if not check.passed:
+                    await update.effective_message.reply_text(_get_text("receipt_ai_reject_text"))
+                    return WAIT_BANK_RECEIPT
+            except Exception:
+                receipt_check_summary = "AI dekont kontrolü sırasında hata oluştu. Manuel inceleme gerekli."
+                if settings.receipt_ai_strict:
+                    await update.effective_message.reply_text(_get_text("receipt_ai_reject_text"))
+                    return WAIT_BANK_RECEIPT
+        else:
+            receipt_check_summary = "Belge formatı AI dekont kontrolüne uygun değil (manuel inceleme)."
+            if settings.receipt_ai_strict:
+                await update.effective_message.reply_text(_get_text("receipt_ai_reject_text"))
+                return WAIT_BANK_RECEIPT
 
     with session_scope() as session:
         user = UserService.get_or_create_user(session, update.effective_user)
@@ -282,9 +366,8 @@ async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.effective_message.reply_text(
         user_text,
         reply_markup=main_menu_keyboard(),
-    )
+        )
 
-    settings: Settings = context.application.bot_data["settings"]
     caption = _render_text(
         "receipt_caption_admin_text",
         request_id=req.id,
@@ -293,6 +376,7 @@ async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE
         balance_amount=_fmt_int(int(requested_amount)),
         payment_try=_fmt_try(payment_try),
     )
+    caption = f"{caption}\nAI Kontrol: {receipt_check_summary}"
     if request_code not in caption:
         caption = f"{caption}\nTalep Kodu: {request_code}"
 
@@ -548,6 +632,62 @@ async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         _render_text("support_contact_text", support_url=url),
         reply_markup=markup,
     )
+    return MENU
+
+
+async def show_rules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not update.effective_message:
+        return MENU
+    settings: Settings = context.application.bot_data["settings"]
+    text = _render_text(
+        "rules_text",
+        rate_percent=str((settings.balance_payment_rate * Decimal("100")).quantize(Decimal("0.01"))).replace(".", ","),
+        min_amount=_fmt_int(settings.min_balance_amount),
+        max_amount=_fmt_int(settings.max_balance_amount),
+        support_username=settings.support_username,
+    )
+    await update.effective_message.reply_text(text, reply_markup=main_menu_keyboard())
+    return MENU
+
+
+async def show_faq(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not update.effective_message:
+        return MENU
+    await update.effective_message.reply_text(_get_text("faq_text"), reply_markup=main_menu_keyboard())
+    return MENU
+
+
+async def show_request_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not update.effective_user or not update.effective_message:
+        return MENU
+
+    with session_scope() as session:
+        user = UserService.get_or_create_user(session, update.effective_user)
+        bank = DepositService.list_user_bank_deposits(session, user.id, limit=1)
+        crypto = DepositService.list_user_crypto_deposits(session, user.id, limit=1)
+        withdrawal = WithdrawalService.list_user_requests(session, user.id, limit=1)
+
+    if not bank and not crypto and not withdrawal:
+        await update.effective_message.reply_text(_get_text("request_status_empty_text"), reply_markup=main_menu_keyboard())
+        return MENU
+
+    lines = [_get_text("request_status_header_text"), ""]
+    if bank:
+        item = bank[0]
+        lines.append(f"Banka: {_req_code(item.id)} | {_status_text(item.status)}")
+        lines.append(_render_text("request_status_next_step_text", next_step=_next_step_for_status(item.status, "bank")))
+        lines.append("")
+    if crypto:
+        item = crypto[0]
+        lines.append(f"Kripto: {_req_code(item.id)} | {_status_text(item.status)}")
+        lines.append(_render_text("request_status_next_step_text", next_step=_next_step_for_status(item.status, "crypto")))
+        lines.append("")
+    if withdrawal:
+        item = withdrawal[0]
+        lines.append(f"Çekim: {_req_code(item.id)} | {_status_text(item.status)}")
+        lines.append(_render_text("request_status_next_step_text", next_step=_next_step_for_status(item.status, "withdraw")))
+
+    await update.effective_message.reply_text("\n".join(lines), reply_markup=main_menu_keyboard())
     return MENU
 
 

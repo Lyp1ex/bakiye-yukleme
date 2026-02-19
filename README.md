@@ -19,10 +19,17 @@ Bu proje Telegram üzerinde çalışan, tamamen **admin onaylı** bakiye yüklem
   - Onay sonrası kullanıcıdan ekran görüntüsü (SS) toplanır
 - Destek butonu: `t.me/donsalvatoree`
 - Talep kodu formatı: `DS-#ID`
+- Talep Durumu ekranı (son banka/kripto/çekim adımları + sıradaki adım)
+- Kurallar ve SSS menüleri
+- AI dekont kontrolü (opsiyonel):
+  - Dekont görselinden belge türü/tutar/tarih kontrolü
+  - İstenirse strict modda otomatik red
 - Admin panelinden:
   - Bekleyen banka talepleri
   - Bekleyen kripto talepleri
   - Bekleyen çekim talepleri
+  - Günlük finans raporu
+  - CSV dışa aktar
   - Kullanıcı arama
   - Manuel bakiye ekleme/çıkarma
   - Metin şablonlarını düzenleme
@@ -35,7 +42,10 @@ Bu proje Telegram üzerinde çalışan, tamamen **admin onaylı** bakiye yüklem
 - `Bakiyem`
 - `Bakiye Yükleme İşlemi`
 - `Çekim Talebi`
+- `Talep Durumu`
 - `Geçmişim`
+- `Kurallar`
+- `SSS`
 - `Soru Sor / Destek`
 
 `Bakiye Yükleme İşlemi`:
@@ -103,10 +113,16 @@ ADMIN_IDS=
 ADMIN_PANEL_TOKEN=
 IBAN_TEXT=IBAN: TR690006701000000041067977 | Alıcı: Mehmet Can Yıldırım
 SUPPORT_USERNAME=donsalvatoree
+APP_LAST_UPDATED=19.02.2026
 TRON_RPC_URL=https://api.trongrid.io
 TRON_WALLET_ADDRESS=
 TRON_PRIVATE_KEY=
 CRYPTO_AUTO_APPROVE=false
+OPENAI_API_KEY=
+RECEIPT_AI_ENABLED=false
+RECEIPT_AI_STRICT=false
+RECEIPT_AMOUNT_TOLERANCE_TRY=5.00
+RECEIPT_DATE_MAX_DIFF_DAYS=3
 DATABASE_URL=sqlite:///./bot.db
 LOG_LEVEL=INFO
 TRON_CHECK_INTERVAL_SEC=45
@@ -159,8 +175,10 @@ Proje `render.yaml` içerir.
    - `ADMIN_PANEL_TOKEN`
    - `IBAN_TEXT`
    - `SUPPORT_USERNAME`
+   - `APP_LAST_UPDATED`
    - `TRON_WALLET_ADDRESS` (opsiyonel)
    - `TRON_PRIVATE_KEY` (opsiyonel)
+   - `OPENAI_API_KEY` (AI dekont kontrolü için opsiyonel)
 7. Deploy başlat.
 8. Deploy sonrası kontrol:
    - `https://SENIN_RENDER_URL/health` -> `ok` dönmeli
@@ -184,6 +202,16 @@ Buradan:
 
 - Tüm aktif bot metinlerini düzenleyebilirsin.
 - Kaydedince anında veritabanına yazılır.
+
+## Profil Görseli (BotFather)
+
+- Hazır görsel dosyası: `assets/ds_bot_kapak.svg`
+- Telegram bot profil fotoğrafını BotFather üzerinden manuel güncelleyebilirsin.
+- Adımlar:
+1. `@BotFather` aç
+2. `/mybots` -> botunu seç
+3. Edit Bot -> Edit Botpic
+4. `assets/ds_bot_kapak.svg` dosyasını PNG/JPG formatına çevirip yükle
 
 ## Sonradan Güncelleme
 
