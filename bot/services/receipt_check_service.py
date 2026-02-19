@@ -120,7 +120,7 @@ def _call_gemini(
             {
                 "parts": [
                     {"text": instruction},
-                    {"inline_data": {"mime_type": mime_type, "data": b64}},
+                    {"inlineData": {"mimeType": mime_type, "data": b64}},
                 ]
             }
         ],
@@ -327,4 +327,3 @@ def verify_receipt_image(
         risk_flags=risk_flags,
         summary=" | ".join(summary_parts),
     )
-

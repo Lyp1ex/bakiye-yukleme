@@ -110,7 +110,7 @@ def get_settings() -> Settings:
         tron_private_key=os.getenv("TRON_PRIVATE_KEY", "").strip(),
         crypto_auto_approve=_parse_bool(os.getenv("CRYPTO_AUTO_APPROVE", "false")),
         gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
-        gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash").strip(),
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip(),
         receipt_ai_enabled=_parse_bool(os.getenv("RECEIPT_AI_ENABLED", "false")),
         receipt_ai_strict=_parse_bool(os.getenv("RECEIPT_AI_STRICT", "false")),
         receipt_amount_tolerance_try=_parse_decimal(
