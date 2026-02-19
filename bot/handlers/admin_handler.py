@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timezone
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
+from telegram.error import BadRequest
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -74,6 +75,49 @@ def _source_text(source_type: str) -> str:
         "crypto": "Kripto",
         "withdraw": "Çekim",
     }.get(source_type, source_type)
+
+
+async def _notify_user_safely(context: ContextTypes.DEFAULT_TYPE, telegram_id: int, text: str) -> None:
+    try:
+        await context.bot.send_message(chat_id=telegram_id, text=text)
+    except Exception:
+        logger.exception("Kullanıcıya bildirim gönderilemedi", extra={"telegram_id": telegram_id})
+
+
+async def _edit_query_message_safely(query, text: str, reply_markup: InlineKeyboardMarkup | None = None) -> None:
+    message = query.message
+    if not message:
+        return
+
+    has_media = bool(message.photo or message.document or message.video or message.animation)
+    try:
+        if has_media:
+            await query.edit_message_caption(caption=text, reply_markup=reply_markup)
+        else:
+            await query.edit_message_text(text=text, reply_markup=reply_markup)
+        return
+    except BadRequest:
+        # Bazı eski mesaj tiplerinde method uyuşmazlığı olabiliyor; diğer yönteme düş.
+        pass
+    except Exception:
+        logger.exception("Callback mesajı düzenlenemedi, fallback deneniyor")
+
+    try:
+        await query.edit_message_text(text=text, reply_markup=reply_markup)
+        return
+    except Exception:
+        pass
+
+    try:
+        await query.edit_message_caption(caption=text, reply_markup=reply_markup)
+        return
+    except Exception:
+        pass
+
+    try:
+        await message.reply_text(text=text, reply_markup=reply_markup)
+    except Exception:
+        logger.exception("Fallback admin mesajı gönderilemedi")
 
 
 async def open_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -467,15 +511,16 @@ async def _approve_bank(query, context: ContextTypes.DEFAULT_TYPE, request_id: i
             req = DepositService.approve_bank_request(session, request_id, admin_id)
             user = session.get(User, req.user_id)
     except ValueError as exc:
-        await query.edit_message_text(f"Onaylanamadı: {exc}")
+        await _edit_query_message_safely(query, f"Onaylanamadı: {exc}")
         return
 
-    await query.edit_message_text(f"Banka talebi {_req_code(request_id)} onaylandı.")
     if user:
-        await context.bot.send_message(
-            chat_id=user.telegram_id,
-            text=f"Banka yükleme talebiniz {_req_code(request_id)} onaylandı. Bakiye eklendi.",
+        await _notify_user_safely(
+            context,
+            user.telegram_id,
+            f"Banka yükleme talebiniz {_req_code(request_id)} onaylandı. Bakiye eklendi.",
         )
+    await _edit_query_message_safely(query, f"Banka talebi {_req_code(request_id)} onaylandı.")
 
 
 async def _reject_bank(query, context: ContextTypes.DEFAULT_TYPE, request_id: int) -> None:
@@ -504,18 +549,19 @@ async def _reject_bank(query, context: ContextTypes.DEFAULT_TYPE, request_id: in
                 )
                 risk_flagged = True
     except ValueError as exc:
-        await query.edit_message_text(f"Reddedilemedi: {exc}")
+        await _edit_query_message_safely(query, f"Reddedilemedi: {exc}")
         return
 
     message = f"Banka talebi {_req_code(request_id)} reddedildi."
     if risk_flagged:
         message += "\n⚠️ Kullanıcı için risk bayrağı oluşturuldu (çoklu red)."
-    await query.edit_message_text(message)
     if user:
-        await context.bot.send_message(
-            chat_id=user.telegram_id,
-            text=f"Banka yükleme talebiniz {_req_code(request_id)} reddedildi. Destek ile iletişime geçin.",
+        await _notify_user_safely(
+            context,
+            user.telegram_id,
+            f"Banka yükleme talebiniz {_req_code(request_id)} reddedildi. Destek ile iletişime geçin.",
         )
+    await _edit_query_message_safely(query, message)
 
 
 async def _show_pending_crypto(query, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -560,15 +606,16 @@ async def _approve_crypto(query, context: ContextTypes.DEFAULT_TYPE, request_id:
             req = DepositService.approve_crypto_request(session, request_id, admin_id)
             user = session.get(User, req.user_id)
     except ValueError as exc:
-        await query.edit_message_text(f"Onaylanamadı: {exc}")
+        await _edit_query_message_safely(query, f"Onaylanamadı: {exc}")
         return
 
-    await query.edit_message_text(f"Kripto talebi {_req_code(request_id)} onaylandı.")
     if user:
-        await context.bot.send_message(
-            chat_id=user.telegram_id,
-            text=f"Kripto yükleme talebiniz {_req_code(request_id)} onaylandı. Bakiye eklendi.",
+        await _notify_user_safely(
+            context,
+            user.telegram_id,
+            f"Kripto yükleme talebiniz {_req_code(request_id)} onaylandı. Bakiye eklendi.",
         )
+    await _edit_query_message_safely(query, f"Kripto talebi {_req_code(request_id)} onaylandı.")
 
 
 async def _reject_crypto(query, context: ContextTypes.DEFAULT_TYPE, request_id: int) -> None:
@@ -583,15 +630,16 @@ async def _reject_crypto(query, context: ContextTypes.DEFAULT_TYPE, request_id: 
             )
             user = session.get(User, req.user_id)
     except ValueError as exc:
-        await query.edit_message_text(f"Reddedilemedi: {exc}")
+        await _edit_query_message_safely(query, f"Reddedilemedi: {exc}")
         return
 
-    await query.edit_message_text(f"Kripto talebi {_req_code(request_id)} reddedildi.")
     if user:
-        await context.bot.send_message(
-            chat_id=user.telegram_id,
-            text=f"Kripto yükleme talebiniz {_req_code(request_id)} reddedildi. Destek ile iletişime geçin.",
+        await _notify_user_safely(
+            context,
+            user.telegram_id,
+            f"Kripto yükleme talebiniz {_req_code(request_id)} reddedildi. Destek ile iletişime geçin.",
         )
+    await _edit_query_message_safely(query, f"Kripto talebi {_req_code(request_id)} reddedildi.")
 
 
 async def _show_pending_withdrawals(query, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -640,18 +688,19 @@ async def _approve_withdrawal(query, context: ContextTypes.DEFAULT_TYPE, request
             req = WithdrawalService.approve_request(session, request_id, admin_id)
             user = session.get(User, req.user_id)
     except ValueError as exc:
-        await query.edit_message_text(f"Onaylanamadı: {exc}")
+        await _edit_query_message_safely(query, f"Onaylanamadı: {exc}")
         return
 
-    await query.edit_message_text(f"Çekim talebi {_req_code(request_id)} onaylandı.")
     if user:
-        await context.bot.send_message(
-            chat_id=user.telegram_id,
-            text=(
+        await _notify_user_safely(
+            context,
+            user.telegram_id,
+            (
                 f"Çekim talebiniz {_req_code(request_id)} onaylandı.\n"
                 "Ödeme yapıldıysa lütfen ekran görüntüsünü (SS) bu sohbete gönderin."
             ),
         )
+    await _edit_query_message_safely(query, f"Çekim talebi {_req_code(request_id)} onaylandı.")
 
 
 async def _reject_withdrawal(query, context: ContextTypes.DEFAULT_TYPE, request_id: int) -> None:
@@ -666,18 +715,22 @@ async def _reject_withdrawal(query, context: ContextTypes.DEFAULT_TYPE, request_
             )
             user = session.get(User, req.user_id)
     except ValueError as exc:
-        await query.edit_message_text(f"Reddedilemedi: {exc}")
+        await _edit_query_message_safely(query, f"Reddedilemedi: {exc}")
         return
 
-    await query.edit_message_text(f"Çekim talebi {_req_code(request_id)} reddedildi. Tutar kullanıcıya iade edildi.")
     if user:
-        await context.bot.send_message(
-            chat_id=user.telegram_id,
-            text=(
+        await _notify_user_safely(
+            context,
+            user.telegram_id,
+            (
                 f"Çekim talebiniz {_req_code(request_id)} reddedildi.\n"
                 f"{req.amount_coins} BAKİYE hesabınıza geri eklendi."
             ),
         )
+    await _edit_query_message_safely(
+        query,
+        f"Çekim talebi {_req_code(request_id)} reddedildi. Tutar kullanıcıya iade edildi.",
+    )
 
 
 async def _send_daily_report(query, context: ContextTypes.DEFAULT_TYPE) -> None:
