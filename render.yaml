@@ -26,5 +26,11 @@ services:
         value: "false"
       - key: TRON_CHECK_INTERVAL_SEC
         value: "45"
+      - key: MIN_BALANCE_AMOUNT
+        value: "15000"
+      - key: MAX_BALANCE_AMOUNT
+        value: "250000"
+      - key: BALANCE_PAYMENT_RATE
+        value: "0.20"
       - key: LOG_LEVEL
         value: INFO

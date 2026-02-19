@@ -58,5 +58,5 @@ class TronClient:
                 }
             )
 
-        logger.debug("Fetched %s TRX transfers", len(result))
+        logger.debug("%s adet TRX transferi alındı", len(result))
         return result

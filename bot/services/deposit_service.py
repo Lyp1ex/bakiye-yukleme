@@ -36,6 +36,35 @@ class DepositService:
         return session.get(CoinPackage, package_id)
 
     @staticmethod
+    def get_or_create_dynamic_package(
+        session: Session,
+        balance_amount: int,
+        payment_try: Decimal,
+    ) -> CoinPackage:
+        payment_try = Decimal(payment_try).quantize(Decimal("0.01"))
+
+        stmt = select(CoinPackage).where(
+            CoinPackage.coin_amount == balance_amount,
+            CoinPackage.try_price == payment_try,
+        )
+        pkg = session.scalar(stmt)
+        if pkg:
+            if not pkg.is_active:
+                pkg.is_active = True
+            return pkg
+
+        pkg = CoinPackage(
+            name=f"Bakiye Yükleme {balance_amount}",
+            try_price=payment_try,
+            coin_amount=balance_amount,
+            trx_amount=Decimal("0.000001"),
+            is_active=True,
+        )
+        session.add(pkg)
+        session.flush()
+        return pkg
+
+    @staticmethod
     def create_bank_deposit_request(
         session: Session,
         user_id: int,
@@ -45,7 +74,7 @@ class DepositService:
     ) -> DepositRequest:
         package = session.get(CoinPackage, package_id)
         if not package or not package.is_active:
-            raise ValueError("Package not available")
+            raise ValueError("Paket uygun değil")
 
         request = DepositRequest(
             user_id=user_id,
@@ -72,14 +101,14 @@ class DepositService:
     def approve_bank_request(session: Session, request_id: int, admin_id: int) -> DepositRequest:
         req = session.get(DepositRequest, request_id)
         if not req:
-            raise ValueError("Deposit request not found")
+            raise ValueError("Yükleme talebi bulunamadı")
         if req.status != DEPOSIT_STATUS_PENDING:
-            raise ValueError("Deposit request is not pending")
+            raise ValueError("Talep beklemede değil")
 
         user = session.get(User, req.user_id)
         package = session.get(CoinPackage, req.package_id)
         if not user or not package:
-            raise ValueError("Related user/package not found")
+            raise ValueError("İlgili kullanıcı veya paket bulunamadı")
 
         user.coin_balance += package.coin_amount
         req.status = DEPOSIT_STATUS_APPROVED
@@ -101,9 +130,9 @@ class DepositService:
     def reject_bank_request(session: Session, request_id: int, admin_id: int, note: str = "") -> DepositRequest:
         req = session.get(DepositRequest, request_id)
         if not req:
-            raise ValueError("Deposit request not found")
+            raise ValueError("Yükleme talebi bulunamadı")
         if req.status != DEPOSIT_STATUS_PENDING:
-            raise ValueError("Deposit request is not pending")
+            raise ValueError("Talep beklemede değil")
 
         req.status = DEPOSIT_STATUS_REJECTED
         req.approved_by = admin_id
@@ -130,9 +159,9 @@ class DepositService:
     ) -> CryptoDepositRequest:
         package = session.get(CoinPackage, package_id)
         if not package or not package.is_active:
-            raise ValueError("Package not available")
+            raise ValueError("Paket uygun değil")
         if not wallet_address:
-            raise ValueError("TRON_WALLET_ADDRESS is not configured")
+            raise ValueError("TRON cüzdan adresi ayarlanmamış")
 
         req = CryptoDepositRequest(
             user_id=user_id,
@@ -185,9 +214,9 @@ class DepositService:
     ) -> CryptoDepositRequest:
         req = session.get(CryptoDepositRequest, request_id)
         if not req:
-            raise ValueError("Crypto request not found")
+            raise ValueError("Kripto talebi bulunamadı")
         if req.status != CRYPTO_STATUS_PENDING_PAYMENT:
-            raise ValueError("Crypto request is not pending for payment")
+            raise ValueError("Kripto talebi ödeme bekleme durumunda değil")
 
         req.tx_hash = tx_hash
         req.tx_from_address = from_address
@@ -200,17 +229,17 @@ class DepositService:
     def approve_crypto_request(session: Session, request_id: int, admin_id: int) -> CryptoDepositRequest:
         req = session.get(CryptoDepositRequest, request_id)
         if not req:
-            raise ValueError("Crypto request not found")
+            raise ValueError("Kripto talebi bulunamadı")
         if req.status not in {CRYPTO_STATUS_PENDING_PAYMENT, CRYPTO_STATUS_DETECTED}:
-            raise ValueError("Crypto request not eligible for approval")
+            raise ValueError("Kripto talebi onaya uygun değil")
 
         if not req.tx_hash:
-            raise ValueError("No transaction detected yet. Approval blocked.")
+            raise ValueError("Henüz işlem tespit edilmedi. Onay engellendi.")
 
         user = session.get(User, req.user_id)
         package = session.get(CoinPackage, req.package_id)
         if not user or not package:
-            raise ValueError("Related user/package not found")
+            raise ValueError("İlgili kullanıcı veya paket bulunamadı")
 
         user.coin_balance += package.coin_amount
         req.status = CRYPTO_STATUS_APPROVED
@@ -232,9 +261,9 @@ class DepositService:
     def reject_crypto_request(session: Session, request_id: int, admin_id: int, note: str = "") -> CryptoDepositRequest:
         req = session.get(CryptoDepositRequest, request_id)
         if not req:
-            raise ValueError("Crypto request not found")
+            raise ValueError("Kripto talebi bulunamadı")
         if req.status in {CRYPTO_STATUS_APPROVED, CRYPTO_STATUS_REJECTED}:
-            raise ValueError("Crypto request already finalized")
+            raise ValueError("Kripto talebi zaten sonuçlandı")
 
         req.status = CRYPTO_STATUS_REJECTED
         req.approved_by = admin_id

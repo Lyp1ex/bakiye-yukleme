@@ -63,7 +63,7 @@ class AdminService:
     def toggle_game(session: Session, admin_id: int, game_id: int) -> Game:
         game = session.get(Game, game_id)
         if not game:
-            raise ValueError("Game not found")
+            raise ValueError("Oyun bulunamadı")
         game.is_active = not game.is_active
         AdminService.log_action(
             session,
@@ -91,7 +91,7 @@ class AdminService:
     ) -> Product:
         game = session.get(Game, game_id)
         if not game:
-            raise ValueError("Game not found")
+            raise ValueError("Oyun bulunamadı")
 
         product = Product(
             game_id=game_id,
@@ -116,7 +116,7 @@ class AdminService:
     def toggle_product(session: Session, admin_id: int, product_id: int) -> Product:
         product = session.get(Product, product_id)
         if not product:
-            raise ValueError("Product not found")
+            raise ValueError("Ürün bulunamadı")
         product.is_active = not product.is_active
         AdminService.log_action(
             session,
@@ -164,7 +164,7 @@ class AdminService:
     def toggle_coin_package(session: Session, admin_id: int, package_id: int) -> CoinPackage:
         package = session.get(CoinPackage, package_id)
         if not package:
-            raise ValueError("Package not found")
+            raise ValueError("Paket bulunamadı")
         package.is_active = not package.is_active
         AdminService.log_action(
             session,
@@ -203,10 +203,10 @@ class AdminService:
     ) -> User:
         user = session.scalar(select(User).where(User.telegram_id == telegram_id))
         if not user:
-            raise ValueError("User not found")
+            raise ValueError("Kullanıcı bulunamadı")
         new_balance = user.coin_balance + delta
         if new_balance < 0:
-            raise ValueError("Insufficient balance for remove operation")
+            raise ValueError("Düşme işlemi için bakiye yetersiz")
         user.coin_balance = new_balance
         AdminService.log_action(
             session,

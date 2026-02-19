@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from decimal import Decimal
-import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
-    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     ConversationHandler,
@@ -13,32 +11,35 @@ from telegram.ext import (
     filters,
 )
 
-from bot.admin.notifier import send_message_to_admins, send_receipt_to_admins
+from bot.admin.notifier import send_receipt_to_admins
 from bot.config.settings import Settings
 from bot.database.session import session_scope
-from bot.keyboards.common import (
-    confirm_buy_keyboard,
-    games_keyboard,
-    main_menu_keyboard,
-    packages_keyboard,
-    payment_method_keyboard,
-    products_keyboard,
-)
-from bot.models import User
-from bot.services import DepositService, ShopService, TemplateService, UserService
+from bot.keyboards.common import MENU_BAKIYE, MENU_GECMIS, MENU_YUKLEME, main_menu_keyboard
+from bot.services import DepositService, TemplateService, UserService
 from bot.texts.messages import DEFAULT_TEXT_TEMPLATES
-from bot.utils.formatters import fmt_trx, fmt_try
 
-logger = logging.getLogger(__name__)
+MENU, WAIT_BALANCE_AMOUNT, WAIT_BANK_RECEIPT = range(3)
+MENU_REGEX = rf"^({MENU_BAKIYE}|{MENU_YUKLEME}|{MENU_GECMIS})$"
 
-MENU, WAIT_BANK_RECEIPT, WAIT_GAME_USER_ID, WAIT_IBAN, WAIT_FULL_NAME, WAIT_BANK_NAME = range(6)
-MENU_REGEX = r"^(Balance|Load Coins|Shop|My Orders|History)$"
+STATUS_MAP_TR = {
+    "pending": "Beklemede",
+    "approved": "Onaylandı",
+    "rejected": "Reddedildi",
+    "pending_payment": "Ödeme Bekleniyor",
+    "detected": "Ödeme Tespit Edildi",
+    "waiting_user_info": "Kullanıcı Bilgisi Bekleniyor",
+    "pending_admin": "Admin İşleminde",
+    "completed": "Tamamlandı",
+    "cancelled": "İptal Edildi",
+}
+
 
 
 def _get_text(key: str, fallback: str | None = None) -> str:
     default_value = fallback if fallback is not None else DEFAULT_TEXT_TEMPLATES.get(key, key)
     with session_scope() as session:
         return TemplateService.get_template(session, key=key, fallback=default_value)
+
 
 
 def _render_text(key: str, **kwargs) -> str:
@@ -51,6 +52,29 @@ def _render_text(key: str, **kwargs) -> str:
             return fallback.format(**kwargs)
         except Exception:
             return fallback
+
+
+
+def _fmt_int(value: int) -> str:
+    return f"{value:,}".replace(",", ".")
+
+
+
+def _fmt_try(value: Decimal) -> str:
+    v = value.quantize(Decimal("0.01"))
+    return f"{str(v).replace('.', ',')} TL"
+
+
+
+def _parse_amount(text: str) -> int | None:
+    cleaned = text.strip().replace(".", "").replace(",", "")
+    if not cleaned.isdigit():
+        return None
+    return int(cleaned)
+
+
+def _status_text(raw_status: str) -> str:
+    return STATUS_MAP_TR.get(raw_status, raw_status)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -68,7 +92,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    _clear_user_context(context)
+    context.user_data.clear()
     if update.effective_message:
         await update.effective_message.reply_text(
             _get_text("cancel_text"),
@@ -80,15 +104,11 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = (update.effective_message.text if update.effective_message else "").strip()
 
-    if text == "Balance":
+    if text == MENU_BAKIYE:
         return await show_balance(update, context)
-    if text == "Load Coins":
-        return await show_load_packages(update, context)
-    if text == "Shop":
-        return await show_games(update, context)
-    if text == "My Orders":
-        return await show_my_orders(update, context)
-    if text == "History":
+    if text == MENU_YUKLEME:
+        return await start_balance_loading(update, context)
+    if text == MENU_GECMIS:
         return await show_history(update, context)
 
     if update.effective_message:
@@ -107,349 +127,72 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         user = UserService.get_or_create_user(session, update.effective_user)
 
     await update.effective_message.reply_text(
-        _render_text("balance_text", balance=user.coin_balance),
+        _render_text("balance_text", balance=_fmt_int(user.coin_balance)),
         reply_markup=main_menu_keyboard(),
     )
     return MENU
 
 
-async def show_load_packages(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def start_balance_loading(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not update.effective_message:
         return MENU
 
-    with session_scope() as session:
-        packages = DepositService.list_active_packages(session)
-
-    if not packages:
-        await update.effective_message.reply_text(
-            _get_text("no_active_items_text"),
-            reply_markup=main_menu_keyboard(),
-        )
-        return MENU
-
+    settings: Settings = context.application.bot_data["settings"]
     await update.effective_message.reply_text(
-        _get_text("load_coins_text"),
-        reply_markup=packages_keyboard(packages),
+        _render_text(
+            "load_balance_start_text",
+            min_amount=_fmt_int(settings.min_balance_amount),
+            max_amount=_fmt_int(settings.max_balance_amount),
+        )
     )
-    return MENU
+    return WAIT_BALANCE_AMOUNT
 
 
-async def show_games(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def handle_balance_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not update.effective_message:
-        return MENU
+        return WAIT_BALANCE_AMOUNT
 
-    with session_scope() as session:
-        games = ShopService.list_active_games(session)
+    settings: Settings = context.application.bot_data["settings"]
+    amount = _parse_amount(update.effective_message.text)
 
-    if not games:
+    if amount is None or amount < settings.min_balance_amount or amount > settings.max_balance_amount:
         await update.effective_message.reply_text(
-            _get_text("no_active_items_text"),
-            reply_markup=main_menu_keyboard(),
-        )
-        return MENU
-
-    await update.effective_message.reply_text(
-        _get_text("shop_select_game_text"),
-        reply_markup=games_keyboard(games),
-    )
-    return MENU
-
-
-async def show_my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not update.effective_user or not update.effective_message:
-        return MENU
-
-    with session_scope() as session:
-        user = UserService.get_or_create_user(session, update.effective_user)
-        orders = ShopService.list_user_orders(session, user.id, pending_only=True)
-
-    if not orders:
-        await update.effective_message.reply_text(
-            _get_text("no_active_orders_text"),
-            reply_markup=main_menu_keyboard(),
-        )
-        return MENU
-
-    lines = ["My Orders:"]
-    for order in orders:
-        lines.append(
-            f"#{order.id} | {order.product.name} | {order.status} | {order.created_at:%Y-%m-%d %H:%M}"
-        )
-
-    await update.effective_message.reply_text("\n".join(lines), reply_markup=main_menu_keyboard())
-    return MENU
-
-
-async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not update.effective_user or not update.effective_message:
-        return MENU
-
-    with session_scope() as session:
-        user = UserService.get_or_create_user(session, update.effective_user)
-        orders = ShopService.list_user_orders(session, user.id, pending_only=False)
-        bank_deposits = DepositService.list_user_bank_deposits(session, user.id, limit=10)
-        crypto_deposits = DepositService.list_user_crypto_deposits(session, user.id, limit=10)
-
-    lines = [_get_text("history_header_text"), ""]
-    lines.append("Bank Deposits:")
-    if bank_deposits:
-        for item in bank_deposits:
-            lines.append(f"#{item.id} | {item.status} | {item.created_at:%Y-%m-%d %H:%M}")
-    else:
-        lines.append(_get_text("no_bank_deposit_records_text"))
-
-    lines.append("")
-    lines.append("Crypto Deposits:")
-    if crypto_deposits:
-        for item in crypto_deposits:
-            lines.append(
-                f"#{item.id} | {item.status} | {Decimal(item.expected_trx):.6f} TRX | {item.created_at:%Y-%m-%d %H:%M}"
-            )
-    else:
-        lines.append(_get_text("no_crypto_deposit_records_text"))
-
-    lines.append("")
-    lines.append("Orders:")
-    if orders:
-        for order in orders:
-            lines.append(f"#{order.id} | {order.product.name} | {order.status}")
-    else:
-        lines.append(_get_text("no_order_records_text"))
-
-    await update.effective_message.reply_text("\n".join(lines), reply_markup=main_menu_keyboard())
-    return MENU
-
-
-async def user_callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    if not query:
-        return MENU
-
-    await query.answer()
-    data = query.data or ""
-
-    if data == "menu_back":
-        await query.edit_message_text(_get_text("main_menu_below_text"))
-        if update.effective_chat:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=_get_text("choose_action_text"),
-                reply_markup=main_menu_keyboard(),
-            )
-        return MENU
-
-    if data == "load_back":
-        with session_scope() as session:
-            packages = DepositService.list_active_packages(session)
-        if not packages:
-            await query.edit_message_text(_get_text("no_active_items_text"))
-            return MENU
-        await query.edit_message_text(
-            _get_text("load_coins_text"),
-            reply_markup=packages_keyboard(packages),
-        )
-        return MENU
-
-    if data.startswith("load_pkg:"):
-        package_id = int(data.split(":", 1)[1])
-        with session_scope() as session:
-            package = DepositService.get_package(session, package_id)
-        if not package or not package.is_active:
-            await query.edit_message_text(_get_text("package_not_available_text"))
-            return MENU
-
-        context.user_data["selected_package_id"] = package_id
-        msg = (
-            f"Selected package: {package.name}\n"
-            f"TRY price: {fmt_try(package.try_price)}\n"
-            f"COIN amount: {package.coin_amount}\n"
-            f"TRX amount: {fmt_trx(package.trx_amount)}\n\n"
-            f"{_get_text('choose_payment_method_text')}"
-        )
-        await query.edit_message_text(msg, reply_markup=payment_method_keyboard(package_id))
-        return MENU
-
-    if data.startswith("pay_bank:"):
-        package_id = int(data.split(":", 1)[1])
-        context.user_data["selected_package_id"] = package_id
-
-        settings: Settings = context.application.bot_data["settings"]
-        with session_scope() as session:
-            package = DepositService.get_package(session, package_id)
-        if not package:
-            await query.edit_message_text(_get_text("package_not_found_text"))
-            return MENU
-
-        await query.edit_message_text(
-            f"{_get_text('bank_receipt_request_text')}\n\n"
-            f"Package: {package.name} ({package.coin_amount} COIN)\n"
-            f"Amount: {fmt_try(package.try_price)}\n\n"
-            f"Bank details:\n{settings.iban_text}\n\n"
-            f"{_get_text('upload_receipt_prompt_text')}",
-        )
-        return WAIT_BANK_RECEIPT
-
-    if data.startswith("pay_trx:"):
-        package_id = int(data.split(":", 1)[1])
-        settings: Settings = context.application.bot_data["settings"]
-
-        if not update.effective_user:
-            await query.edit_message_text(_get_text("user_not_found_text"))
-            return MENU
-
-        try:
-            with session_scope() as session:
-                user = UserService.get_or_create_user(session, update.effective_user)
-                req = DepositService.create_crypto_deposit_request(
-                    session,
-                    user_id=user.id,
-                    package_id=package_id,
-                    wallet_address=settings.tron_wallet_address,
-                )
-                package = DepositService.get_package(session, package_id)
-        except ValueError as exc:
-            await query.edit_message_text(f"Cannot create TRX request: {exc}")
-            return MENU
-
-        if not package:
-            await query.edit_message_text(_get_text("package_not_found_text"))
-            return MENU
-
-        await query.edit_message_text(
-            f"{_get_text('trx_payment_text')}\n\n"
-            f"Request ID: #{req.id}\n"
-            f"Wallet: {settings.tron_wallet_address}\n"
-            f"Exact Amount: {fmt_trx(req.expected_trx)}\n"
-            f"Package: {package.coin_amount} COIN\n\n"
-            "After blockchain detection, admin will approve manually.",
-        )
-
-        await send_message_to_admins(
-            context.application,
-            settings,
-            text=(
-                "New TRX deposit request created.\n"
-                f"Request: #{req.id}\n"
-                f"User TG: {update.effective_user.id}\n"
-                f"Expected: {fmt_trx(req.expected_trx)}"
-            ),
-        )
-        return MENU
-
-    if data == "shop_back_games":
-        with session_scope() as session:
-            games = ShopService.list_active_games(session)
-        if not games:
-            await query.edit_message_text(_get_text("no_active_items_text"))
-            return MENU
-        await query.edit_message_text(
-            _get_text("shop_select_game_text"),
-            reply_markup=games_keyboard(games),
-        )
-        return MENU
-
-    if data.startswith("shop_game:"):
-        game_id = int(data.split(":", 1)[1])
-        context.user_data["shop_game_id"] = game_id
-
-        with session_scope() as session:
-            products = ShopService.list_active_products_by_game(session, game_id)
-
-        if not products:
-            await query.edit_message_text(_get_text("no_products_for_game_text"))
-            return MENU
-
-        await query.edit_message_text(
-            _get_text("select_product_text"),
-            reply_markup=products_keyboard(products),
-        )
-        return MENU
-
-    if data == "shop_back_products":
-        game_id = context.user_data.get("shop_game_id")
-        if not game_id:
-            await query.edit_message_text(_get_text("session_expired_select_game_text"))
-            return MENU
-
-        with session_scope() as session:
-            products = ShopService.list_active_products_by_game(session, int(game_id))
-
-        if not products:
-            await query.edit_message_text(_get_text("no_products_for_game_text"))
-            return MENU
-
-        await query.edit_message_text(
-            _get_text("select_product_text"),
-            reply_markup=products_keyboard(products),
-        )
-        return MENU
-
-    if data.startswith("shop_product:"):
-        product_id = int(data.split(":", 1)[1])
-        with session_scope() as session:
-            product = ShopService.get_product(session, product_id)
-
-        if not product:
-            await query.edit_message_text(_get_text("product_not_found_text"))
-            return MENU
-
-        await query.edit_message_text(
-            f"{product.name}\n"
-            f"Price: {product.price_coins} COIN\n"
-            f"Description: {product.description or '-'}",
-            reply_markup=confirm_buy_keyboard(product.id),
-        )
-        return MENU
-
-    if data.startswith("shop_buy:"):
-        if not update.effective_user:
-            await query.edit_message_text(_get_text("user_not_found_text"))
-            return MENU
-
-        product_id = int(data.split(":", 1)[1])
-
-        try:
-            with session_scope() as session:
-                user = UserService.get_or_create_user(session, update.effective_user)
-                order = ShopService.create_order_with_coin_deduction(
-                    session,
-                    user_id=user.id,
-                    product_id=product_id,
-                )
-                product = ShopService.get_product(session, product_id)
-                game = ShopService.get_game(session, product.game_id) if product else None
-                new_balance = user.coin_balance
-        except ValueError as exc:
-            await query.edit_message_text(_render_text("purchase_failed_text", error=str(exc)))
-            return MENU
-
-        if not product or not game:
-            await query.edit_message_text("Product/game not found.")
-            return MENU
-
-        context.user_data["pending_order_id"] = order.id
-        context.user_data["pending_order_game_label"] = game.id_label
-
-        await query.edit_message_text(
             _render_text(
-                "purchase_success_text",
-                price=product.price_coins,
-                balance=new_balance,
-                id_label=game.id_label,
+                "invalid_balance_amount_text",
+                min_amount=_fmt_int(settings.min_balance_amount),
+                max_amount=_fmt_int(settings.max_balance_amount),
             )
         )
-        return WAIT_GAME_USER_ID
+        return WAIT_BALANCE_AMOUNT
 
-    return MENU
+    payment_try = (Decimal(amount) * settings.balance_payment_rate).quantize(Decimal("0.01"))
+
+    context.user_data["requested_balance_amount"] = amount
+    context.user_data["payment_try_amount"] = str(payment_try)
+
+    await update.effective_message.reply_text(
+        _render_text(
+            "payment_instruction_text",
+            balance_amount=_fmt_int(amount),
+            rate_percent=str((settings.balance_payment_rate * Decimal("100")).quantize(Decimal("0.01"))).replace(".", ","),
+            payment_try=_fmt_try(payment_try),
+            iban_text=settings.iban_text,
+        )
+    )
+    return WAIT_BANK_RECEIPT
 
 
 async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not update.effective_user or not update.effective_message:
         return MENU
 
-    package_id = context.user_data.get("selected_package_id")
-    if not package_id:
-        await update.effective_message.reply_text(_get_text("no_package_selected_text"))
+    requested_amount = context.user_data.get("requested_balance_amount")
+    payment_try_raw = context.user_data.get("payment_try_amount")
+    if not requested_amount or not payment_try_raw:
+        await update.effective_message.reply_text(
+            _get_text("use_menu_buttons_text"),
+            reply_markup=main_menu_keyboard(),
+        )
         return MENU
 
     file_id: str | None = None
@@ -466,25 +209,27 @@ async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.effective_message.reply_text(_get_text("upload_receipt_only_text"))
         return WAIT_BANK_RECEIPT
 
-    try:
-        with session_scope() as session:
-            user = UserService.get_or_create_user(session, update.effective_user)
-            req = DepositService.create_bank_deposit_request(
-                session,
-                user_id=user.id,
-                package_id=int(package_id),
-                receipt_file_id=file_id,
-                receipt_file_type=file_type,
-            )
-            package = DepositService.get_package(session, int(package_id))
-            waiting_text = TemplateService.get_template(
-                session,
-                key="deposit_waiting",
-                fallback="Your deposit request has been received. Please wait for admin approval.",
-            )
-    except ValueError as exc:
-        await update.effective_message.reply_text(str(exc))
-        return MENU
+    payment_try = Decimal(str(payment_try_raw))
+
+    with session_scope() as session:
+        user = UserService.get_or_create_user(session, update.effective_user)
+        package = DepositService.get_or_create_dynamic_package(
+            session,
+            balance_amount=int(requested_amount),
+            payment_try=payment_try,
+        )
+        req = DepositService.create_bank_deposit_request(
+            session,
+            user_id=user.id,
+            package_id=package.id,
+            receipt_file_id=file_id,
+            receipt_file_type=file_type,
+        )
+        waiting_text = TemplateService.get_template(
+            session,
+            key="deposit_waiting",
+            fallback=DEFAULT_TEXT_TEMPLATES["deposit_waiting"],
+        )
 
     await update.effective_message.reply_text(
         _render_text("deposit_received_text", request_id=req.id, waiting_text=waiting_text),
@@ -492,18 +237,18 @@ async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
     settings: Settings = context.application.bot_data["settings"]
-    caption = (
-        "Pending bank deposit\n"
-        f"Request: #{req.id}\n"
-        f"User TG: {update.effective_user.id}\n"
-        f"Package: {package.name if package else '-'}\n"
-        f"Coin: {package.coin_amount if package else '-'}"
+    caption = _render_text(
+        "receipt_caption_admin_text",
+        request_id=req.id,
+        telegram_id=update.effective_user.id,
+        balance_amount=_fmt_int(int(requested_amount)),
+        payment_try=_fmt_try(payment_try),
     )
     markup = InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("Approve", callback_data=f"admin_bank_ok:{req.id}"),
-                InlineKeyboardButton("Reject", callback_data=f"admin_bank_no:{req.id}"),
+                InlineKeyboardButton("Onayla", callback_data=f"admin_bank_ok:{req.id}"),
+                InlineKeyboardButton("Reddet", callback_data=f"admin_bank_no:{req.id}"),
             ]
         ]
     )
@@ -516,113 +261,41 @@ async def handle_bank_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=markup,
     )
 
-    context.user_data.pop("selected_package_id", None)
+    context.user_data.clear()
     return MENU
 
 
-async def handle_game_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not update.effective_message:
-        return WAIT_GAME_USER_ID
-
-    game_user_id = update.effective_message.text.strip()
-    if len(game_user_id) < 2:
-        await update.effective_message.reply_text(_get_text("invalid_game_user_id_text"))
-        return WAIT_GAME_USER_ID
-
-    context.user_data["pending_game_user_id"] = game_user_id
-    await update.effective_message.reply_text(_get_text("ask_iban_text"))
-    return WAIT_IBAN
-
-
-async def handle_iban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not update.effective_message:
-        return WAIT_IBAN
-
-    iban = update.effective_message.text.strip().replace(" ", "")
-    if len(iban) < 10:
-        await update.effective_message.reply_text(_get_text("invalid_iban_text"))
-        return WAIT_IBAN
-
-    context.user_data["pending_iban"] = iban
-    await update.effective_message.reply_text(_get_text("ask_full_name_text"))
-    return WAIT_FULL_NAME
-
-
-async def handle_full_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not update.effective_message:
-        return WAIT_FULL_NAME
-
-    full_name = update.effective_message.text.strip()
-    if len(full_name.split()) < 2:
-        await update.effective_message.reply_text(_get_text("invalid_full_name_text"))
-        return WAIT_FULL_NAME
-
-    context.user_data["pending_full_name"] = full_name
-    await update.effective_message.reply_text(_get_text("ask_bank_name_text"))
-    return WAIT_BANK_NAME
-
-
-async def handle_bank_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not update.effective_user or not update.effective_message:
         return MENU
 
-    bank_name = update.effective_message.text.strip()
-    if len(bank_name) < 2:
-        await update.effective_message.reply_text(_get_text("invalid_bank_name_text"))
-        return WAIT_BANK_NAME
-
-    order_id = context.user_data.get("pending_order_id")
-    game_user_id = context.user_data.get("pending_game_user_id")
-    iban = context.user_data.get("pending_iban")
-    full_name = context.user_data.get("pending_full_name")
-
-    if not order_id or not game_user_id or not iban or not full_name:
-        await update.effective_message.reply_text(_get_text("order_session_expired_text"))
-        _clear_user_context(context)
-        return MENU
-
     with session_scope() as session:
-        order = ShopService.attach_delivery_info(
-            session,
-            order_id=int(order_id),
-            game_user_id=str(game_user_id),
-            iban=str(iban),
-            full_name=str(full_name),
-            bank_name=bank_name,
-        )
-        user: User | None = UserService.get_by_telegram_id(session, update.effective_user.id)
-        order_received_text = TemplateService.get_template(
-            session,
-            key="order_received",
-            fallback="Your order is created. Our admin will complete delivery soon.",
-        )
+        user = UserService.get_or_create_user(session, update.effective_user)
+        bank_deposits = DepositService.list_user_bank_deposits(session, user.id, limit=20)
+        crypto_deposits = DepositService.list_user_crypto_deposits(session, user.id, limit=20)
 
-    await update.effective_message.reply_text(
-        _render_text("order_submitted_text", order_id=order.id, order_received_text=order_received_text),
-        reply_markup=main_menu_keyboard(),
-    )
+    lines = [_get_text("history_header_text"), ""]
+    lines.append(_get_text("bank_history_header_text"))
 
-    settings: Settings = context.application.bot_data["settings"]
-    markup = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("Complete Order", callback_data=f"admin_order_done:{order.id}")]]
-    )
-    await send_message_to_admins(
-        context.application,
-        settings,
-        text=(
-            "New pending order\n"
-            f"Order: #{order.id}\n"
-            f"User TG: {update.effective_user.id}\n"
-            f"Game User ID: {game_user_id}\n"
-            f"IBAN: {iban}\n"
-            f"Name: {full_name}\n"
-            f"Bank: {bank_name}\n"
-            f"User balance now: {user.coin_balance if user else '?'}"
-        ),
-        reply_markup=markup,
-    )
+    if bank_deposits:
+        for item in bank_deposits:
+            lines.append(
+                f"#{item.id} | {_status_text(item.status)} | {_fmt_int(item.package.coin_amount)} BAKİYE | {_fmt_try(Decimal(item.package.try_price))}"
+            )
+    else:
+        lines.append(_get_text("no_bank_deposit_records_text"))
 
-    _clear_user_context(context)
+    lines.append("")
+    lines.append(_get_text("crypto_history_header_text"))
+    if crypto_deposits:
+        for item in crypto_deposits:
+            lines.append(
+                f"#{item.id} | {_status_text(item.status)} | {Decimal(item.expected_trx):.6f} TRX"
+            )
+    else:
+        lines.append(_get_text("no_crypto_deposit_records_text"))
+
+    await update.effective_message.reply_text("\n".join(lines), reply_markup=main_menu_keyboard())
     return MENU
 
 
@@ -632,32 +305,17 @@ def build_user_conversation_handler() -> ConversationHandler:
         entry_points=[
             CommandHandler("start", start),
             MessageHandler(filters.Regex(MENU_REGEX), menu_router),
-            CallbackQueryHandler(
-                user_callback_router,
-                pattern=r"^(load_|pay_|shop_|menu_back|load_back)",
-            ),
         ],
         states={
             MENU: [
                 CommandHandler("start", start),
                 MessageHandler(filters.Regex(MENU_REGEX), menu_router),
-                CallbackQueryHandler(
-                    user_callback_router,
-                    pattern=r"^(load_|pay_|shop_|menu_back|load_back)",
-                ),
+            ],
+            WAIT_BALANCE_AMOUNT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_balance_amount)
             ],
             WAIT_BANK_RECEIPT: [
-                MessageHandler(filters.PHOTO | filters.Document.ALL, handle_bank_receipt)
-            ],
-            WAIT_GAME_USER_ID: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_game_user_id)
-            ],
-            WAIT_IBAN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_iban)],
-            WAIT_FULL_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_full_name)
-            ],
-            WAIT_BANK_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_bank_name)
+                MessageHandler(~filters.COMMAND, handle_bank_receipt)
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -666,17 +324,3 @@ def build_user_conversation_handler() -> ConversationHandler:
         per_user=True,
         per_message=False,
     )
-
-
-
-def _clear_user_context(context: ContextTypes.DEFAULT_TYPE) -> None:
-    keys = [
-        "selected_package_id",
-        "pending_order_id",
-        "pending_order_game_label",
-        "pending_game_user_id",
-        "pending_iban",
-        "pending_full_name",
-    ]
-    for key in keys:
-        context.user_data.pop(key, None)

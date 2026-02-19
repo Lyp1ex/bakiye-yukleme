@@ -20,25 +20,30 @@ from bot.database.bootstrap import initialize_database
 from bot.database.session import session_scope
 from bot.handlers import build_admin_conversation_handler, build_user_conversation_handler
 from bot.services.template_service import TemplateService
-from bot.texts.messages import DEFAULT_TEXT_TEMPLATES, TEMPLATE_LABELS
+from bot.texts.messages import (
+    DEFAULT_TEXT_TEMPLATES,
+    LEGACY_TEXT_TEMPLATES_EN,
+    OBSOLETE_TEMPLATE_KEYS,
+    TEMPLATE_LABELS,
+)
 
 logger = logging.getLogger(__name__)
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.exception("Unhandled error", exc_info=context.error)
+    logger.exception("Yakalanmayan hata", exc_info=context.error)
     if isinstance(update, Update) and update.effective_message:
         try:
-            await update.effective_message.reply_text("An unexpected error occurred. Please try again.")
+            await update.effective_message.reply_text("Beklenmeyen bir hata oluştu. Lütfen tekrar deneyin.")
         except Exception:
-            logger.exception("Failed to send error message to user")
+            logger.exception("Kullanıcıya hata mesajı gönderilemedi")
 
 
 
 def build_application() -> Application:
     settings = get_settings()
     if not settings.bot_token:
-        raise RuntimeError("BOT_TOKEN is required in .env before running the bot.")
+        raise RuntimeError("Botu çalıştırmadan önce `.env` dosyasında `BOT_TOKEN` zorunludur.")
     setup_logging(settings.log_level)
     initialize_database()
 
@@ -73,10 +78,10 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/admin-panel":
             if not self.admin_panel_token:
-                self._send_plain(503, "ADMIN_PANEL_TOKEN is not configured.")
+                self._send_plain(503, "ADMIN_PANEL_TOKEN ayarlanmamış.")
                 return
             if not self._is_authorized(parsed):
-                self._send_plain(403, "Forbidden. Use /admin-panel?token=YOUR_TOKEN")
+                self._send_plain(403, "Yetkisiz erişim. /admin-panel?token=SENIN_TOKEN adresini kullanın.")
                 return
             token = self._extract_token(parsed)
             self._send_html(200, _render_admin_panel_html(token))
@@ -94,11 +99,11 @@ class _HealthHandler(BaseHTTPRequestHandler):
             return
 
         if not self.admin_panel_token:
-            self._send_plain(503, "ADMIN_PANEL_TOKEN is not configured.")
+            self._send_plain(503, "ADMIN_PANEL_TOKEN ayarlanmamış.")
             return
 
         if not self._is_authorized(parsed):
-            self._send_plain(403, "Forbidden")
+            self._send_plain(403, "Yetkisiz erişim")
             return
 
         length = int(self.headers.get("Content-Length", "0"))
@@ -109,7 +114,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
         content = (payload.get("content", [""])[0]).strip()
 
         if not key:
-            self._send_plain(400, "key is required")
+            self._send_plain(400, "`key` alanı zorunludur")
             return
 
         with session_scope() as session:
@@ -154,7 +159,8 @@ def _render_admin_panel_html(token: str) -> str:
         db_rows = TemplateService.list_templates(session)
 
     db_map = {row.key: row.content for row in db_rows}
-    all_keys = sorted(set(DEFAULT_TEXT_TEMPLATES.keys()) | set(db_map.keys()))
+    hidden_legacy_keys = (set(LEGACY_TEXT_TEMPLATES_EN.keys()) - set(DEFAULT_TEXT_TEMPLATES.keys())) | OBSOLETE_TEMPLATE_KEYS
+    all_keys = sorted((set(DEFAULT_TEXT_TEMPLATES.keys()) | set(db_map.keys())) - hidden_legacy_keys)
 
     sections: list[str] = []
     for key in all_keys:
@@ -167,7 +173,7 @@ def _render_admin_panel_html(token: str) -> str:
                 f'<form method="POST" action="/admin-panel/save?token={quote_plus(token)}">'
                 f'<input type="hidden" name="key" value="{escape(key)}" />'
                 f'<textarea name="content" rows="5">{escape(value)}</textarea>'
-                '<button type="submit">Save</button>'
+                '<button type="submit">Kaydet</button>'
                 "</form>"
                 "</div>"
             )
@@ -175,18 +181,18 @@ def _render_admin_panel_html(token: str) -> str:
 
     create_form = (
         '<div class="card">'
-        "<h3>Create New Text Key</h3>"
+        "<h3>Yeni Metin Anahtarı Oluştur</h3>"
         f'<form method="POST" action="/admin-panel/save?token={quote_plus(token)}">'
-        '<input type="text" name="key" placeholder="example_key" required />'
-        '<textarea name="content" rows="4" placeholder="Text content"></textarea>'
-        '<button type="submit">Create</button>'
+        '<input type="text" name="key" placeholder="ornek_anahtar" required />'
+        '<textarea name="content" rows="4" placeholder="Metin içeriği"></textarea>'
+        '<button type="submit">Oluştur</button>'
         "</form>"
         "</div>"
     )
 
     return (
         "<!doctype html>"
-        "<html><head><meta charset='utf-8'><title>Coin Shop Admin Panel</title>"
+        "<html><head><meta charset='utf-8'><title>Bakiye Botu Metin Paneli</title>"
         "<style>"
         "body{font-family:Arial,sans-serif;background:#f5f7fb;margin:24px;}"
         "h1{margin-bottom:8px;}"
@@ -199,8 +205,8 @@ def _render_admin_panel_html(token: str) -> str:
         "button{background:#111;color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;}"
         "button:hover{opacity:.9;}"
         "</style></head><body>"
-        "<h1>Coin Shop Text Admin Panel</h1>"
-        "<div class='muted'>Buradan bottaki yazilari kod degistirmeden duzenleyebilirsin.</div>"
+        "<h1>Bakiye Botu Metin Yönetim Paneli</h1>"
+        "<div class='muted'>Buradan bottaki yazıları kod değiştirmeden düzenleyebilirsiniz.</div>"
         "<div class='grid'>"
         + create_form
         + "".join(sections)
@@ -217,14 +223,14 @@ def _start_health_server_if_needed(settings: Settings) -> None:
     try:
         port = int(port_raw)
     except ValueError:
-        logger.warning("Invalid PORT value, health server disabled", extra={"port": port_raw})
+        logger.warning("Geçersiz PORT değeri, health sunucusu devre dışı bırakıldı", extra={"port": port_raw})
         return
 
     _HealthHandler.admin_panel_token = settings.admin_panel_token
 
     def run_server() -> None:
         server = HTTPServer(("0.0.0.0", port), _HealthHandler)
-        logger.info("Health/Admin server started", extra={"port": port})
+        logger.info("Health/Admin sunucusu başlatıldı", extra={"port": port})
         server.serve_forever()
 
     thread = threading.Thread(target=run_server, daemon=True)
@@ -236,7 +242,7 @@ def main() -> None:
     app = build_application()
     settings: Settings = app.bot_data["settings"]
     _start_health_server_if_needed(settings)
-    logger.info("Starting bot with long polling")
+    logger.info("Bot long polling ile başlatılıyor")
     try:
         asyncio.get_event_loop()
     except RuntimeError:

@@ -26,7 +26,7 @@ async def tron_watcher_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         txs = tron_client.fetch_incoming_trx(settings.tron_wallet_address)
     except Exception:
-        logger.exception("Failed to fetch TRX transfers")
+        logger.exception("TRX transferleri alınamadı")
         return
 
     if not txs:
@@ -77,11 +77,11 @@ async def tron_watcher_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     for item in matches:
         text = (
-            "Yeni TRX odeme tespit edildi.\n"
-            f"Crypto Request: #{item['request_id']}\n"
+            "Yeni TRX ödeme tespit edildi.\n"
+            f"Kripto Talebi: #{item['request_id']}\n"
             f"Beklenen: {item['expected_trx']} TRX\n"
             f"TX: `{item['tx_hash']}`\n"
-            "Onay icin admin panelden veya asagidaki butondan devam edin."
+            "Onay için admin panelden veya aşağıdaki butondan devam edin."
         )
         markup = InlineKeyboardMarkup(
             [[InlineKeyboardButton("Onayla", callback_data=f"admin_crypto_ok:{item['request_id']}")]]
@@ -92,9 +92,9 @@ async def tron_watcher_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             await application.bot.send_message(
                 chat_id=item["user_tg_id"],
                 text=(
-                    "TRX odemeniz tespit edildi.\n"
-                    "Guvenlik nedeniyle coin yukleme otomatik degildir. Admin onayi bekleniyor."
+                    "TRX ödemeniz tespit edildi.\n"
+                    "Güvenlik nedeniyle bakiye yükleme otomatik değildir. Admin onayı bekleniyor."
                 ),
             )
         except Exception:
-            logger.exception("Failed to notify user for detected TRX", extra=item)
+            logger.exception("Tespit edilen TRX için kullanıcı bildirimi gönderilemedi", extra=item)

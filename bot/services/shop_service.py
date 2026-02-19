@@ -41,10 +41,10 @@ class ShopService:
         user = session.get(User, user_id)
         product = session.get(Product, product_id)
         if not user or not product or not product.is_active:
-            raise ValueError("Product is not available")
+            raise ValueError("Ürün uygun değil")
 
         if user.coin_balance < product.price_coins:
-            raise ValueError("Insufficient coin balance")
+            raise ValueError("Coin bakiyesi yetersiz")
 
         user.coin_balance -= product.price_coins
 
@@ -68,9 +68,9 @@ class ShopService:
     ) -> Order:
         order = session.get(Order, order_id)
         if not order:
-            raise ValueError("Order not found")
+            raise ValueError("Sipariş bulunamadı")
         if order.status != ORDER_STATUS_WAITING_INFO:
-            raise ValueError("Order is not waiting for user info")
+            raise ValueError("Sipariş kullanıcı bilgisi bekleme durumunda değil")
 
         order.game_user_id = game_user_id.strip()
         order.iban = iban.strip()
@@ -111,9 +111,9 @@ class ShopService:
     ) -> Order:
         order = session.get(Order, order_id)
         if not order:
-            raise ValueError("Order not found")
+            raise ValueError("Sipariş bulunamadı")
         if order.status != ORDER_STATUS_PENDING_ADMIN:
-            raise ValueError("Order is not pending admin")
+            raise ValueError("Sipariş admin onayı bekleme durumunda değil")
 
         order.status = ORDER_STATUS_COMPLETED
         order.completed_by = admin_telegram_id

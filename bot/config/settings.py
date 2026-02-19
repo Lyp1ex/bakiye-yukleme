@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from functools import lru_cache
 import os
 from typing import Set
@@ -21,6 +22,9 @@ class Settings:
     database_url: str
     log_level: str
     tron_check_interval_sec: int
+    min_balance_amount: int
+    max_balance_amount: int
+    balance_payment_rate: Decimal
 
 
 
@@ -44,6 +48,26 @@ def _parse_bool(raw: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+
+def _parse_int(raw: str | None, default: int) -> int:
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+
+def _parse_decimal(raw: str | None, default: Decimal) -> Decimal:
+    if not raw:
+        return default
+    try:
+        return Decimal(raw)
+    except Exception:
+        return default
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     load_dotenv()
@@ -54,7 +78,7 @@ def get_settings() -> Settings:
         admin_panel_token=os.getenv("ADMIN_PANEL_TOKEN", "").strip(),
         iban_text=os.getenv(
             "IBAN_TEXT",
-            "IBAN: TR00 0000 0000 0000 0000 0000 00\\nAlici: Coin Shop",
+            "IBAN: TR00 0000 0000 0000 0000 0000 00\\nAlıcı: Hesap Sahibi",
         ),
         tron_rpc_url=os.getenv("TRON_RPC_URL", "https://api.trongrid.io").rstrip("/"),
         tron_wallet_address=os.getenv("TRON_WALLET_ADDRESS", "").strip(),
@@ -62,5 +86,11 @@ def get_settings() -> Settings:
         crypto_auto_approve=_parse_bool(os.getenv("CRYPTO_AUTO_APPROVE", "false")),
         database_url=os.getenv("DATABASE_URL", "sqlite:///./bot.db").strip(),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
-        tron_check_interval_sec=int(os.getenv("TRON_CHECK_INTERVAL_SEC", "45")),
+        tron_check_interval_sec=_parse_int(os.getenv("TRON_CHECK_INTERVAL_SEC"), 45),
+        min_balance_amount=_parse_int(os.getenv("MIN_BALANCE_AMOUNT"), 15000),
+        max_balance_amount=_parse_int(os.getenv("MAX_BALANCE_AMOUNT"), 250000),
+        balance_payment_rate=_parse_decimal(
+            os.getenv("BALANCE_PAYMENT_RATE"),
+            Decimal("0.20"),
+        ),
     )

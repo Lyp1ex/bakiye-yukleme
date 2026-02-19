@@ -1,85 +1,64 @@
-# Telegram Coin Shop Bot (Python)
+# Telegram Bakiye Yükleme Botu (Türkçe MVP)
 
-A production-ready MVP Telegram bot with:
+Bu proje Telegram üzerinde çalışan, tamamen **admin onaylı** bakiye yükleme botudur.
 
-- Manual bank deposit requests (receipt upload + admin approval)
-- TRX payment request + blockchain detection watcher + **manual admin approval only**
-- Coin shop purchase flow
-- Post-purchase required fields: Game User ID, IBAN, Name Surname, Bank Name
-- Admin panel for deposits, orders, games, products, packages, templates, user search, manual coin add/remove
+## Özellikler
 
-## Important Security Rule
+- Kullanıcıdan bakiye yükleme tutarı alma
+- Kural kontrolü:
+  - Minimum: `15.000`
+  - Maksimum: `250.000`
+  - Ödenecek tutar: `%20` (ör. 50.000 bakiye için 10.000 TL)
+- IBAN gösterme + dekont yükletme
+- **Otomatik bakiye ekleme yok**
+- Admin onayı sonrası bakiye ekleme
+- Admin panelinden:
+  - Bekleyen banka talepleri
+  - Bekleyen kripto talepleri
+  - Kullanıcı arama
+  - Manuel bakiye ekleme/çıkarma
+  - Metin şablonlarını düzenleme
+- Web metin paneli: `/admin-panel?token=...`
 
-This bot enforces:
+## Kullanıcı Akışı
 
-- **No automatic coin loading**
-- **All bank and crypto deposits require admin approval**
+`/start` menüsü:
 
----
+- `Bakiyem`
+- `Bakiye Yükleme İşlemi`
+- `Geçmişim`
 
-## Project Structure
+`Bakiye Yükleme İşlemi`:
 
-```text
-bot/
-  main.py
-  config/
-  database/
-  models/
-  services/
-  handlers/
-  keyboards/
-  admin/
-  crypto/
-  texts/
-  utils/
-  migrations/
-```
+1. Kullanıcı yüklemek istediği bakiyeyi yazar.
+2. Bot `%20` ödeme tutarını hesaplar.
+3. Bot IBAN bilgisini gösterir.
+4. Kullanıcı dekont gönderir.
+5. Admin onaylarsa bakiye eklenir.
 
----
+## 1) Kod Nereye Konur?
 
-## 1) Where to paste the code (beginner)
+Bu klasörde proje zaten hazır:
 
-If you already have this project folder, skip this section.
+`/Users/yasindemirci/Documents/AI`
 
-If you are starting from scratch:
-
-1. Create a folder named `telegram-coin-shop-bot`.
-2. Put each file into the exact path shown in this repository.
-3. Open Terminal (or Command Prompt) and move into that folder.
-
-Mac example:
+Terminal açınca önce bu klasöre geç:
 
 ```bash
-cd /path/to/telegram-coin-shop-bot
+cd /Users/yasindemirci/Documents/AI
 ```
 
----
+## 2) Python Kurulumu (Sıfırdan)
 
-## 2) Install Python (beginner)
-
-1. Go to [python.org/downloads](https://www.python.org/downloads/)
-2. Install Python **3.11 or newer**.
-3. Verify installation:
-
-Mac/Linux:
+1. [python.org/downloads](https://www.python.org/downloads/) adresine git.
+2. Python `3.11` veya üzerini kur.
+3. Kurulumu kontrol et:
 
 ```bash
 python3 --version
 ```
 
-Windows:
-
-```bash
-python --version
-```
-
-You should see something like `Python 3.11.x`.
-
----
-
-## 3) Install dependencies
-
-### Mac/Linux
+## 3) Gerekli Paketleri Kur
 
 ```bash
 cd /Users/yasindemirci/Documents/AI
@@ -89,41 +68,21 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### Windows (PowerShell)
+## 4) `.env` Dosyası Oluştur
 
-```powershell
-cd C:\path\to\telegram-coin-shop-bot
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
----
-
-## 4) Create `.env` file
-
-1. Copy example file:
-
-Mac/Linux:
+Örnek dosyadan kopyala:
 
 ```bash
 cp .env.example .env
 ```
 
-Windows:
-
-```powershell
-copy .env.example .env
-```
-
-2. Open `.env` and fill values:
+`.env` içine şu alanları doldur:
 
 ```env
 BOT_TOKEN=
 ADMIN_IDS=
 ADMIN_PANEL_TOKEN=
-IBAN_TEXT=
+IBAN_TEXT=IBAN: TR690006701000000041067977 | Alıcı: Mehmet Can Yıldırım
 TRON_RPC_URL=https://api.trongrid.io
 TRON_WALLET_ADDRESS=
 TRON_PRIVATE_KEY=
@@ -131,134 +90,95 @@ CRYPTO_AUTO_APPROVE=false
 DATABASE_URL=sqlite:///./bot.db
 LOG_LEVEL=INFO
 TRON_CHECK_INTERVAL_SEC=45
+MIN_BALANCE_AMOUNT=15000
+MAX_BALANCE_AMOUNT=250000
+BALANCE_PAYMENT_RATE=0.20
 ```
 
-### How to get values
+## 5) Bot Token Nasıl Alınır?
 
-- `BOT_TOKEN`: Create bot with Telegram `@BotFather` -> `/newbot`
-- `ADMIN_IDS`: Your Telegram numeric ID (example: `123456789`), comma-separated for multiple admins
-- `ADMIN_PANEL_TOKEN`: Secret token for web text admin panel
-- `IBAN_TEXT`: Bank instructions shown to users
-- `TRON_WALLET_ADDRESS`: Your receiving TRON wallet address
+1. Telegram’da `@BotFather` aç.
+2. `/newbot` yaz.
+3. İsim ve kullanıcı adı ver.
+4. Verilen token’ı alıp `.env` içindeki `BOT_TOKEN=` kısmına yapıştır.
 
----
+## 6) Telegram Admin ID Nasıl Bulunur?
 
-## 5) Run bot locally (step-by-step)
+1. Telegram’da `@userinfobot` veya `@myidbot` aç.
+2. `start` yaz.
+3. Gelen sayısal ID’yi `.env` içinde `ADMIN_IDS=` alanına yaz.
 
-### Step A: Run migration
+## 7) Botu Lokal Çalıştır
 
 ```bash
+cd /Users/yasindemirci/Documents/AI
+source .venv/bin/activate
 alembic upgrade head
-```
-
-### Step B: Start bot
-
-```bash
 python -m bot.main
 ```
 
-You should see logs and bot starts with **long polling**.
+Kontrol:
 
-### Step C: First checks
+1. Telegram’dan botta `/start` yaz.
+2. Admin hesabınla `/admin` yaz.
+3. Metin paneli için: `http://localhost:10000/admin-panel?token=SENIN_TOKEN`
+   - Lokal testte `PORT` yoksa web panel açılmaz; Render’da otomatik açılır.
 
-1. In Telegram, send `/start` to bot.
-2. In Telegram, from admin account send `/admin`.
-3. In admin panel, add/manage games/products/packages if needed.
-4. Test full flow: load coins (bank and TRX), approve from admin, buy product.
+## Render Üzerinde Ücretsiz Yayına Alma (24/7)
 
----
+Proje `render.yaml` içerir.
 
-## Admin Panel (`/admin`)
-
-Includes:
-
-- Pending Bank Deposits
-- Pending Crypto Deposits
-- Pending Orders
-- Manage Games
-- Manage Products
-- Manage Coin Packages
-- Search Users
-- Manual coin add/remove
-- Message Templates
-
-## Web Text Admin Panel (Very Simple)
-
-You can edit bot texts from browser without code changes.
-
-URL format:
-
-```text
-https://YOUR_RENDER_URL/admin-panel?token=YOUR_ADMIN_PANEL_TOKEN
-```
-
-From this page you can:
-- Edit existing text keys
-- Create new text keys
-- Save instantly to database
-
----
-
-## Free Hosting Guide (Render) for 3+ months
-
-This project includes `render.yaml`.
-
-### Why Render in this repo
-
-- Railway and Fly plans commonly move to paid/trial limits.
-- Render free web service can be used for one bot if you keep a health ping running.
-
-### Step-by-step (beginner)
-
-1. Create GitHub account: [github.com](https://github.com)
-2. Create new repository.
-3. Upload this whole project to that repo.
-4. Create Render account: [render.com](https://render.com)
-5. In Render dashboard: `New +` -> `Blueprint`
-6. Connect your GitHub repo.
-7. Render reads `render.yaml` automatically.
-8. In Render service -> `Environment`, fill these variables:
+1. GitHub repo’ya kodu push et.
+2. [render.com](https://render.com) hesabına gir.
+3. `New` -> `Blueprint` seç.
+4. GitHub repo’yu bağla.
+5. Render `render.yaml` dosyasını otomatik okur.
+6. Ortam değişkenlerini doldur:
    - `BOT_TOKEN`
    - `ADMIN_IDS`
    - `ADMIN_PANEL_TOKEN`
    - `IBAN_TEXT`
-   - `TRON_WALLET_ADDRESS`
-   - `TRON_PRIVATE_KEY`
-9. Click deploy.
-10. After deploy, open:
-    - `https://YOUR_RENDER_URL/health`
-    - Must return `ok`
+   - `TRON_WALLET_ADDRESS` (opsiyonel)
+   - `TRON_PRIVATE_KEY` (opsiyonel)
+7. Deploy başlat.
+8. Deploy sonrası kontrol:
+   - `https://SENIN_RENDER_URL/health` -> `ok` dönmeli
 
-### Keep it running 24/7 on free plan
+### Uyumayı Engelleme (Ücretsiz planda)
 
-Render free instances can sleep when no inbound traffic. To avoid sleep:
+Render free servisler boşta uyuyabilir. Sürekli açık kalması için:
 
-1. Create free monitor at [UptimeRobot](https://uptimerobot.com/)
-2. Add HTTP monitor to `https://YOUR_RENDER_URL/health`
-3. Interval: every 5-10 minutes
+1. [UptimeRobot](https://uptimerobot.com) aç.
+2. Yeni HTTP monitor oluştur.
+3. URL: `https://SENIN_RENDER_URL/health`
+4. 5 dakikada bir ping ayarla.
 
-This keeps traffic active and helps bot stay online continuously.
+## Metinleri Kod Yazmadan Düzenleme
 
----
+Deploy sonrası:
 
-## How to update the bot later
+`https://SENIN_RENDER_URL/admin-panel?token=SENIN_ADMIN_PANEL_TOKEN`
 
-1. Edit code locally.
-2. Test locally:
+Buradan:
+
+- Tüm aktif bot metinlerini düzenleyebilirsin.
+- Kaydedince anında veritabanına yazılır.
+
+## Sonradan Güncelleme
+
+1. Kodda değişiklik yap.
+2. Lokal test et:
 
 ```bash
 alembic upgrade head
 python -m bot.main
 ```
 
-3. Push changes to GitHub.
-4. Render auto-deploys from new commit.
-5. Watch Render logs for startup errors.
+3. GitHub’a push et.
+4. Render otomatik yeni deploy alır.
 
----
+## Güvenlik Notu
 
-## Notes
-
-- SQLite is default for MVP (`DATABASE_URL=sqlite:///./bot.db`).
-- For PostgreSQL later, set `DATABASE_URL` to your Postgres URL.
-- `CRYPTO_AUTO_APPROVE` exists for compatibility, but this bot still requires admin approval by design.
+- Bot token gizlidir, kimseyle paylaşma.
+- Token sızdıysa `@BotFather -> /revoke` ile yenile.
+- `CRYPTO_AUTO_APPROVE=false` kalmalı.

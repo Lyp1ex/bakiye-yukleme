@@ -12,7 +12,7 @@ class Game(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     requires_server: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    id_label: Mapped[str] = mapped_column(String(100), nullable=False, default="Game User ID")
+    id_label: Mapped[str] = mapped_column(String(100), nullable=False, default="Oyuncu ID")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

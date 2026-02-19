@@ -24,7 +24,7 @@ async def send_message_to_admins(
                 reply_markup=reply_markup,
             )
         except Exception:
-            logger.exception("Failed to send admin message", extra={"admin_id": admin_id})
+            logger.exception("Admin mesajı gönderilemedi", extra={"admin_id": admin_id})
 
 
 async def send_receipt_to_admins(
@@ -52,4 +52,4 @@ async def send_receipt_to_admins(
                     reply_markup=reply_markup,
                 )
         except Exception:
-            logger.exception("Failed to send receipt to admin", extra={"admin_id": admin_id})
+            logger.exception("Admin dekont bildirimi gönderilemedi", extra={"admin_id": admin_id})

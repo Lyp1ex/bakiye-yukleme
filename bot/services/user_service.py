@@ -44,10 +44,10 @@ class UserService:
     def adjust_balance(session: Session, user_id: int, delta: int) -> int:
         user = session.get(User, user_id)
         if not user:
-            raise ValueError("User not found")
+            raise ValueError("Kullanıcı bulunamadı")
         new_balance = user.coin_balance + delta
         if new_balance < 0:
-            raise ValueError("Insufficient balance")
+            raise ValueError("Bakiye yetersiz")
         user.coin_balance = new_balance
         session.flush()
         return user.coin_balance
